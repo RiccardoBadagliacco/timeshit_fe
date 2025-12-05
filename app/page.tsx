@@ -8,8 +8,9 @@ import {
   useRef,
   useState,
 } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Crown, MapPin, Menu, Trophy } from "lucide-react";
+import { CalendarDays, Crown, Home as HomeIcon, Menu, Trophy } from "lucide-react";
 
 import AchievementToast from "@/components/AchievementToast";
 import LoaderOverlay from "@/components/LoaderOverlay";
@@ -129,6 +130,8 @@ const DEFAULT_ACH: AchievementDef[] = [
 
 const colors = ["#f44336", "#2196f3", "#ffeb3b", "#4caf50", "#ff9800"];
 const BUILD_TAG = process.env.NEXT_PUBLIC_BUILD_TAG || "dev";
+const STORAGE_USERNAME_KEY = "ts_username";
+const STORAGE_UID_KEY = "ts_uid";
 
 type UserInfoResponse = {
   user?: UserInfo;
@@ -326,11 +329,10 @@ function Home() {
   const [isReady, setIsReady] = useState(false);
   const [achievements, setAchievements] = useState<AchievementCard[]>([]);
   const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
-  const [achOpen, setAchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentSection, setCurrentSection] = useState<
-    "pooplog" | "classifiche" | "poopbucket" | "achievements"
-  >("pooplog");
+    "wc" | "pooplog" | "classifiche" | "poopbucket" | "achievements"
+  >("wc");
   const [saving, setSaving] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [recentAch, setRecentAch] = useState<AchievementCard[]>([]);
@@ -452,8 +454,18 @@ function Home() {
         addLog(`Build tag: ${BUILD_TAG}`);
         addLog(`API base: ${apiBase || "(same origin)"}`);
         const tg = getTelegram();
-        let username = searchParams.get("username") || undefined;
-        let uid = searchParams.get("uid") || undefined;
+        let username =
+          searchParams.get("username") ||
+          (typeof window !== "undefined"
+            ? localStorage.getItem(STORAGE_USERNAME_KEY)
+            : null) ||
+          undefined;
+        let uid =
+          searchParams.get("uid") ||
+          (typeof window !== "undefined"
+            ? localStorage.getItem(STORAGE_UID_KEY)
+            : null) ||
+          undefined;
         const nameParam = searchParams.get("name") || undefined;
 
         const tgUser = tg?.initDataUnsafe?.user;
@@ -467,6 +479,10 @@ function Home() {
         const fallbackName = username ? `@${username}` : nameParam || "Player";
 
         setPlayerName(fallbackName);
+        if (typeof window !== "undefined") {
+          if (username) localStorage.setItem(STORAGE_USERNAME_KEY, username);
+          if (uid) localStorage.setItem(STORAGE_UID_KEY, uid);
+        }
 
         // Carica configurazione di gioco (endpoint dedicato) con log del body in caso di parse error
         try {
@@ -906,13 +922,10 @@ function Home() {
 
   const closeAchToast = () => setRecentAch([]);
   const closeMenu = () => setMenuOpen(false);
-  const unlockedCount = useMemo(
-    () => achievements.filter((ach) => ach.unlocked).length,
-    [achievements],
-  );
 
   return (
     <>
+      <div aria-hidden className="bg-layer-home" />
       <canvas ref={canvasRef} id="confettiCanvas" />
 
       <XpToast xp={xpToast} />
@@ -1057,15 +1070,26 @@ function Home() {
               </button>
             </div>
             <div className="nav-items">
-              <button
+              <Link
+                className={`nav-item ${currentSection === "wc" ? "active" : ""}`}
+                href="/"
+                onClick={() => {
+                  setCurrentSection("wc");
+                  closeMenu();
+                }}
+              >
+                <HomeIcon size={18} /> WC
+              </Link>
+              <Link
                 className={`nav-item ${currentSection === "pooplog" ? "active" : ""}`}
+                href="/pooplog"
                 onClick={() => {
                   setCurrentSection("pooplog");
                   closeMenu();
                 }}
               >
-                <MapPin size={18} /> PoopLog
-              </button>
+                <CalendarDays size={18} /> PoopLog
+              </Link>
               <button
                 className={`nav-item ${currentSection === "classifiche" ? "active" : ""}`}
                 onClick={() => {
@@ -1075,121 +1099,30 @@ function Home() {
               >
                 <Crown size={18} /> Classifiche
               </button>
-              <button
+              <Link
                 className={`nav-item ${currentSection === "poopbucket" ? "active" : ""}`}
+                href="/poopbucket"
                 onClick={() => {
                   setCurrentSection("poopbucket");
                   closeMenu();
                 }}
               >
                 <Trophy size={18} /> Poopbucket
-              </button>
-              <button
+              </Link>
+              <Link
                 className={`nav-item ${currentSection === "achievements" ? "active" : ""}`}
+                href="/achivments"
                 onClick={() => {
                   setCurrentSection("achievements");
                   closeMenu();
-                  setAchOpen(true);
                 }}
               >
                 <Trophy size={18} /> Achievements
-              </button>
+              </Link>
             </div>
           </div>
         </div>
       ) : null}
-
-      <div
-        aria-hidden={!achOpen}
-        id="achOverlay"
-        style={{ display: achOpen ? "flex" : "none" }}
-      >
-        <div className="ach-panel">
-          <div className="ach-header">
-            <div className="ach-title">
-              <h1>Collezione</h1>
-              <p>Obiettivi, descrizioni e progresso</p>
-            </div>
-            <div className="ach-legend">
-              <div className="ach-pill">
-                <span className="pill-label">Sbloccati</span>
-                <span className="pill-value">
-                  {unlockedCount}/{achievements.length}
-                </span>
-              </div>
-              <div className="ach-pill secondary">
-                <span className="pill-label">Totale log</span>
-                <span className="pill-value">{stats.total}</span>
-              </div>
-            </div>
-          </div>
-          <div className="ach-list" id="achGridContainer">
-            {achievements.length ? (
-              achievements.map((ach) => {
-                const progress = ach.progress;
-                return (
-                  <div
-                    key={ach.id}
-                    className={`ach-row ${ach.unlocked ? "unlocked" : "locked"}`}
-                  >
-                    <div className="ach-icon-box">
-                      <div className="ach-icon">{ach.emoji}</div>
-                      <div className="ach-status-badge">
-                        {ach.unlocked ? "Sbloccato" : "In corso"}
-                      </div>
-                    </div>
-                    <div className="ach-body">
-                      <div className="ach-title-row">
-                        <div className="ach-name">{ach.title}</div>
-                        <div className="ach-tags">
-                          {ach.year ? (
-                            <span className="ach-tag">📅 {ach.year}</span>
-                          ) : null}
-                          {ach.unlocked ? (
-                            <span className="ach-tag success">✔</span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="ach-desc">
-                        {ach.description ||
-                          "Nuovo badge aggiunto alla tua collezione."}
-                      </div>
-                      {progress ? (
-                        <div className="ach-progress">
-                          <div className="ach-progress-top">
-                            <span>{progress.label}</span>
-                            <span className="ach-progress-num">
-                              {Math.min(progress.current, progress.target)} /{" "}
-                              {progress.target}
-                            </span>
-                          </div>
-                          <div className="ach-progress-track">
-                            <div
-                              className="ach-progress-fill"
-                              style={{ width: `${progress.pct}%` }}
-                            />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="ach-progress-hint">
-                          {ach.unlocked
-                            ? "Obiettivo completato."
-                            : "Obiettivo segreto/evento: continua a giocare!"}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <p className="ach-empty">Nessun achievement disponibile.</p>
-            )}
-          </div>
-          <button className="close-btn" onClick={() => setAchOpen(false)}>
-            CHIUDI X
-          </button>
-        </div>
-      </div>
 
       <LoaderOverlay
         emoji="🧻"
@@ -1204,6 +1137,13 @@ function Home() {
         subtitle="Stiamo spedendo la tua epica flushata al quartier generale…"
         title="Flush in corso"
       />
+
+      <div className="build-footer" role="contentinfo">
+        <div className="build-chip">
+          <span aria-hidden className="build-dot" />
+          <span>Build {BUILD_TAG}</span>
+        </div>
+      </div>
 
       <style global jsx>{`
         * {
@@ -1597,6 +1537,35 @@ function Home() {
           box-shadow: 0px 2px 0px var(--brown);
         }
 
+        .build-footer {
+          margin-top: 22px;
+          display: flex;
+          justify-content: center;
+        }
+
+        .build-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          border-radius: 999px;
+          border: 2px solid var(--brown);
+          background: rgba(255, 255, 255, 0.92);
+          color: #5d4037;
+          font-weight: 800;
+          font-size: 0.85rem;
+          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.15);
+          letter-spacing: 0.2px;
+        }
+
+        .build-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: var(--accent-dark);
+          box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.25);
+        }
+
         @keyframes pulse {
           0% {
             transform: scale(1);
@@ -1710,306 +1679,20 @@ function Home() {
           }
         }
 
-        #achOverlay {
+        .bg-layer-home {
           position: fixed;
           inset: 0;
-          background: rgba(78, 52, 46, 0.95);
-          backdrop-filter: blur(5px);
-          z-index: 2000;
-          display: none;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-
-        .ach-panel {
-          width: 90%;
-          max-width: 960px;
-          height: 86%;
-          background: #fff8e1;
-          border: 4px solid var(--brown);
-          border-radius: 24px;
-          padding: 20px;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0px 10px 0px rgba(0, 0, 0, 0.4);
-          animation: slideDown 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-
-        @keyframes slideDown {
-          from {
-            transform: translateY(-50px) scale(0.9);
-          }
-          to {
-            transform: translateY(0) scale(1);
-          }
-        }
-
-        .ach-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 16px;
-          border-bottom: 2px dashed var(--brown);
-          padding-bottom: 12px;
-          flex-wrap: wrap;
-        }
-
-        .ach-title {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .ach-title h1 {
-          margin: 0;
-          font-family: "Titan One";
-          font-size: 1.8rem;
-          color: var(--brown);
-        }
-
-        .ach-title p {
-          margin: 4px 0 0;
-          color: #5d4037;
-          font-weight: 700;
-          font-size: 0.95rem;
-        }
-
-        .ach-legend {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-          flex-wrap: wrap;
-        }
-
-        .ach-pill {
-          background: #fff9c4;
-          border: 2px solid var(--brown);
-          border-radius: 14px;
-          padding: 8px 12px;
-          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.15);
-          display: flex;
-          flex-direction: column;
-          min-width: 90px;
-        }
-
-        .ach-pill.secondary {
-          background: #fff;
-        }
-
-        .pill-label {
-          color: #5d4037;
-          font-weight: 700;
-          font-size: 0.8rem;
-        }
-
-        .pill-value {
-          color: var(--brown);
-          font-weight: 900;
-          font-size: 1.1rem;
-        }
-
-        .ach-list {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          overflow-y: auto;
-          padding-right: 6px;
-          flex: 1;
-        }
-
-        .ach-list::-webkit-scrollbar {
-          width: 6px;
-        }
-
-        .ach-list::-webkit-scrollbar-thumb {
-          background: var(--brown);
-          border-radius: 4px;
-        }
-
-        .ach-row {
-          display: grid;
-          grid-template-columns: auto 1fr;
-          gap: 12px;
-          align-items: flex-start;
-          background: #fff;
-          border: 3px solid var(--brown);
-          border-radius: 16px;
-          padding: 12px;
-          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.12);
-          position: relative;
-        }
-
-        .ach-row.unlocked {
-          background: #fff9c4;
-          border-color: var(--accent-dark);
-          box-shadow: 0px 4px 0px var(--accent-dark);
-        }
-
-        .ach-row.locked {
-          background: #f0f0f0;
-          border-color: #bdbdbd;
-        }
-
-        .ach-icon-box {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 6px;
-          min-width: 68px;
-        }
-
-        .ach-icon {
-          font-size: 2.4rem;
-          filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.15));
-        }
-
-        .ach-status-badge {
-          background: #fff;
-          border: 2px solid var(--brown);
-          border-radius: 10px;
-          padding: 4px 8px;
-          font-weight: 800;
-          font-size: 0.75rem;
-          color: var(--brown);
-          box-shadow: 0px 2px 0px rgba(0, 0, 0, 0.15);
-        }
-
-        .ach-row.locked .ach-status-badge {
-          background: #efebe9;
-          border-color: #a1887f;
-          color: #5d4037;
-        }
-
-        .ach-body {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        .ach-title-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        .ach-name {
-          font-weight: 800;
-          font-size: 1rem;
-          line-height: 1.2;
-          color: var(--brown);
-        }
-
-        .ach-tags {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          flex-wrap: wrap;
-        }
-
-        .ach-tag {
-          background: #fff0c2;
-          border: 1px solid var(--brown);
-          border-radius: 999px;
-          padding: 2px 8px;
-          font-weight: 700;
-          font-size: 0.75rem;
-          color: #3e2723;
-        }
-
-        .ach-tag.success {
-          background: #c8e6c9;
-          border-color: var(--green-dark);
-          color: var(--green-dark);
-        }
-
-        .ach-desc {
-          color: #5d4037;
-          font-size: 0.9rem;
-          line-height: 1.3;
-        }
-
-        .ach-progress {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          margin-top: 4px;
-        }
-
-        .ach-progress-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          font-weight: 800;
-          color: #4e342e;
-          font-size: 0.85rem;
-        }
-
-        .ach-progress-num {
-          font-variant-numeric: tabular-nums;
-        }
-
-        .ach-progress-track {
-          width: 100%;
-          height: 12px;
-          border-radius: 999px;
-          border: 2px solid var(--brown);
-          overflow: hidden;
-          background: #ffe8c3;
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-        }
-
-        .ach-progress-fill {
-          height: 100%;
-          background: linear-gradient(90deg, #ffb74d, #ff9800);
-          width: 0%;
-          transition: width 0.3s ease;
-        }
-
-        .ach-progress-hint {
-          color: #6d4c41;
-          font-weight: 700;
-          font-size: 0.85rem;
-          margin-top: 4px;
-        }
-
-        .ach-empty {
-          color: #5d4037;
-          font-weight: 800;
-          text-align: center;
-          padding: 16px 0;
-        }
-
-        .close-btn {
-          margin-top: 15px;
-          background: var(--red);
-          color: white;
-          font-family: "Titan One";
-          border: 3px solid var(--brown);
-          border-radius: 12px;
-          padding: 10px;
-          font-size: 1.2rem;
-          cursor: pointer;
-          box-shadow: 0px 4px 0px var(--brown);
-          text-align: center;
-        }
-
-        .close-btn:active {
-          transform: translateY(4px);
-          box-shadow: none;
+          background:
+            radial-gradient(var(--accent) 15%, transparent 16%),
+            radial-gradient(var(--accent) 15%, transparent 16%);
+          background-color: var(--bg);
+          background-position:
+            0 0,
+            10px 10px;
+          background-size: 20px 20px;
+          background-repeat: repeat;
+          z-index: -1;
+          pointer-events: none;
         }
 
         #confettiCanvas {

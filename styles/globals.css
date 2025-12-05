@@ -25,18 +25,7 @@ body {
 }
 
 body {
-  font-family: "Nunito", sans-serif;
-  margin: 0;
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(var(--accent) 15%, transparent 16%),
-    radial-gradient(var(--accent) 15%, transparent 16%);
-  background-size: 20px 20px;
-  background-position:
-    0 0,
-    10px 10px;
   padding: 20px 15px 120px 15px;
-  color: var(--brown);
+  font-family: "Nunito", sans-serif;
   overflow-x: hidden;
-  min-height: var(--app-height);
 }
