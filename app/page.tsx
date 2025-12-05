@@ -1,21 +1,53 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams } from "next/navigation";
+import { Crown, MapPin, Menu, Trophy } from "lucide-react";
+
+import AchievementToast from "@/components/AchievementToast";
+import LoaderOverlay from "@/components/LoaderOverlay";
+import XpToast from "@/components/XpToast";
+import { AchievementCard, XpToastPayload } from "@/types/gamification";
 
 type OptionCfg = { label: string; emoji?: string; xp?: number };
+type GeoRules = {
+  home_behavior?: string;
+  require_location_for_lat_lng?: boolean;
+};
+type GeolocationConfig = {
+  enabled?: boolean;
+  accuracy?: "high" | "balanced" | "low" | string;
+  store_coordinates?: boolean;
+  fields?: string[];
+  allowed_locations?: string[];
+  blocked_locations?: string[];
+  rules?: GeoRules;
+  xp_bonus?: { new_place?: number; far_from_home?: number };
+  distance_thresholds?: { far_from_home_km?: number };
+};
 type AchievementDef = {
   id: string;
   title?: string;
   label?: string;
   emoji?: string;
   description?: string;
+  year?: number;
+   condition?: Record<string, unknown>;
+  hidden?: boolean;
 };
 type GameConfig = {
   base_xp?: number;
   consistency?: Record<string, OptionCfg>;
   size?: Record<string, OptionCfg>;
   location?: Record<string, OptionCfg>;
+  geolocation?: GeolocationConfig;
   achievements?: AchievementDef[];
 };
 type Progress = {
@@ -29,18 +61,15 @@ type Stats = {
   total: number;
   streak: number;
   combo: number;
+  consistencyCounts?: Record<string, number>;
+  sizeCounts?: Record<string, number>;
+  locationCounts?: Record<string, number>;
 };
 type UserInfo = {
   id: number;
   username?: string;
   name?: string;
-};
-type AchievementCard = {
-  id: string;
-  title: string;
-  emoji: string;
-  unlocked: boolean;
-  description?: string;
+  photo_url?: string;
 };
 type ConfettiPiece = {
   x: number;
@@ -53,7 +82,43 @@ type ConfettiPiece = {
   grav: number;
 };
 
+type GeoReading = {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  timestamp?: number;
+};
+
 const apiBaseEnv = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+
+function normalizeBase(base?: string | null) {
+  if (!base) return "";
+  const trimmed = base.trim();
+
+  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+}
+
+function coerceBaseForHttps(base: string) {
+  if (typeof window === "undefined") return base;
+  if (!base.startsWith("http://")) return base;
+  if (window.location.protocol === "https:") {
+    try {
+      const url = new URL(base);
+
+      if (url.hostname === window.location.hostname) {
+        url.protocol = "https:";
+
+        return normalizeBase(url.toString());
+      }
+    } catch (err) {
+      console.warn("Invalid api base", err);
+    }
+
+    return "";
+  }
+
+  return base;
+}
 
 const DEFAULT_ACH: AchievementDef[] = [
   { id: "first", title: "Prima Cacca", emoji: "💩" },
@@ -63,6 +128,7 @@ const DEFAULT_ACH: AchievementDef[] = [
 ];
 
 const colors = ["#f44336", "#2196f3", "#ffeb3b", "#4caf50", "#ff9800"];
+const BUILD_TAG = process.env.NEXT_PUBLIC_BUILD_TAG || "dev";
 
 type UserInfoResponse = {
   user?: UserInfo;
@@ -74,6 +140,9 @@ type UserInfoResponse = {
     total?: number;
     streak_days?: number;
     best_combo?: number;
+    consistency_counts?: Record<string, number>;
+    size_counts?: Record<string, number>;
+    location_counts?: Record<string, number>;
   };
   achievements?: { id: string }[];
   game_config?: GameConfig;
@@ -87,49 +156,147 @@ type UserStatsResponse = {
     poops_today?: number;
     streak_days?: number;
     best_combo?: number;
+    consistency_counts?: Record<string, number>;
+    size_counts?: Record<string, number>;
+    location_counts?: Record<string, number>;
   };
   achievements?: { id: string }[];
 };
 
 function getTelegram() {
   if (typeof window === "undefined") return null;
+
   return (window as any).Telegram?.WebApp || null;
 }
 
 function buildAchievements(
   config: GameConfig,
   unlocked: Set<string>,
+  stats?: Stats | null,
 ): AchievementCard[] {
   const defs =
     config.achievements && config.achievements.length
       ? config.achievements
       : DEFAULT_ACH;
 
-  return defs.map((ach) => ({
-    id: ach.id,
-    title: ach.title || ach.label || ach.id,
-    emoji: ach.emoji || "🏆",
-    description: ach.description,
-    unlocked: unlocked.has(ach.id),
-  }));
+  const resolveMetric = (key: string): number | undefined => {
+    if (!stats) return undefined;
+    if (key === "total_poops") return stats.total ?? 0;
+    if (key === "daily_streak") return stats.streak ?? 0;
+    if (key === "poops_in_one_day") return stats.combo ?? 0;
+    if (key.startsWith("type_")) {
+      const slug = key.replace("type_", "");
+      return stats.consistencyCounts?.[slug] ?? 0;
+    }
+    if (key.startsWith("size_")) {
+      const slug = key.replace("size_", "");
+      return stats.sizeCounts?.[slug] ?? 0;
+    }
+    if (key.startsWith("loc_")) {
+      const slug = key.replace("loc_", "");
+      return stats.locationCounts?.[slug] ?? 0;
+    }
+
+    return undefined;
+  };
+
+  const describeCondition = (key: string, target: number) => {
+    if (key === "total_poops") return "Log totali";
+    if (key === "daily_streak") return "Streak di giorni";
+    if (key === "poops_in_one_day") return "Log nello stesso giorno";
+    if (key.startsWith("type_")) {
+      const slug = key.replace("type_", "");
+      const label = config.consistency?.[slug]?.label || slug;
+      return label;
+    }
+    if (key.startsWith("size_")) {
+      const slug = key.replace("size_", "");
+      const label = config.size?.[slug]?.label || slug;
+      return label;
+    }
+    if (key.startsWith("loc_")) {
+      const slug = key.replace("loc_", "");
+      const label = config.location?.[slug]?.label || slug;
+      return label;
+    }
+    if (key.startsWith("weekend")) return "Log nel weekend";
+    if (key.startsWith("unique_locations")) return "Location uniche";
+
+    return `Obiettivo (${target})`;
+  };
+
+  const enriched = defs
+    .filter((ach) => !ach.hidden || unlocked.has(ach.id))
+    .map((ach) => {
+      let progress: AchievementCard["progress"] | undefined;
+      if (ach.condition && stats) {
+        for (const [key, rawTarget] of Object.entries(ach.condition)) {
+          if (typeof rawTarget !== "number" || rawTarget <= 0) continue;
+          const current = resolveMetric(key);
+          if (current === undefined) continue;
+          const pct = Math.max(0, Math.min(100, (current / rawTarget) * 100));
+          progress = {
+            current,
+            target: rawTarget,
+            pct,
+            label: describeCondition(key, rawTarget),
+          };
+          break;
+        }
+      }
+
+      const unlockedNow = unlocked.has(ach.id);
+      if (progress && unlockedNow) {
+        progress = { ...progress, current: progress.target, pct: 100 };
+      }
+
+      return {
+        id: ach.id,
+        title: ach.title || ach.label || ach.id,
+        emoji: ach.emoji || "🏆",
+        description: ach.description,
+        unlocked: unlockedNow,
+        year: ach.year,
+        hidden: ach.hidden,
+        condition: ach.condition,
+        progress,
+      };
+    });
+
+  return enriched;
 }
 
 function resolveApiBase() {
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    const qp =
+      params.get("api") || params.get("api_base") || params.get("apiBase");
+
+    if (qp) return normalizeBase(qp);
+
+    const globalBase = (window as any).__API_BASE__ || (window as any).API_BASE;
+
+    if (globalBase) return normalizeBase(String(globalBase));
+  }
+
   // Prefer env override (es. https://my-api.example.com)
-  if (apiBaseEnv) return apiBaseEnv;
+  if (apiBaseEnv) return coerceBaseForHttps(normalizeBase(apiBaseEnv));
   if (typeof window === "undefined") return "";
   const { origin, port } = window.location;
+
   // In dev (Next port 3000/3001) puntiamo al backend 8000.
   if (port === "3000" || port === "3001") {
     return origin.replace(`:${port}`, ":8000");
   }
+
   // In produzione usa path relativo per evitare mixed-content e CORS.
   return "";
 }
 
-function buildApiUrl(path: string) {
-  const base = resolveApiBase();
-  return `${base}${path}`;
+function buildApiUrl(path: string, base?: string) {
+  const apiBase = coerceBaseForHttps(normalizeBase(base ?? resolveApiBase()));
+
+  return `${apiBase}${path}`;
 }
 
 function Home() {
@@ -144,15 +311,14 @@ function Home() {
     total: 0,
     streak: 0,
     combo: 0,
+    consistencyCounts: {},
+    sizeCounts: {},
+    locationCounts: {},
   });
   const [user, setUser] = useState<UserInfo | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const [selection, setSelection] = useState({
-    type: "",
-    size: "",
-    loc: "",
-  });
-  const [lastSubmission, setLastSubmission] = useState({
     type: "",
     size: "",
     loc: "",
@@ -161,12 +327,22 @@ function Home() {
   const [achievements, setAchievements] = useState<AchievementCard[]>([]);
   const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
   const [achOpen, setAchOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [currentSection, setCurrentSection] = useState<
+    "pooplog" | "classifiche" | "poopbucket" | "achievements"
+  >("pooplog");
+  const [saving, setSaving] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [recentAch, setRecentAch] = useState<AchievementCard[]>([]);
+  const [xpToast, setXpToast] = useState<XpToastPayload | null>(null);
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalXp, setModalXp] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [stuck, setStuck] = useState(false);
+
+  const [geoData, setGeoData] = useState<GeoReading | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [geoLoading, setGeoLoading] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const confettiRef = useRef<ConfettiPiece[]>([]);
@@ -176,34 +352,71 @@ function Home() {
     if (!progress || !progress.xp_for_next) return 0;
     const perc =
       ((progress.xp_in_level || 0) / (progress.xp_for_next || 1)) * 100;
+
     return Math.max(0, Math.min(100, perc));
   }, [progress]);
 
   const resetSelections = () => {
     setSelection({ type: "", size: "", loc: "" });
     setIsReady(false);
+    setGeoData(null);
+    setGeoError(null);
+    setGeoLoading(false);
   };
 
   useEffect(() => {
     if (!config) return;
-    setAchievements(buildAchievements(config, unlockedIds));
-  }, [config, unlockedIds]);
+    setAchievements(buildAchievements(config, unlockedIds, stats));
+  }, [config, unlockedIds, stats]);
 
   useEffect(() => {
     setIsReady(Boolean(selection.type && selection.size && selection.loc));
   }, [selection]);
 
   useEffect(() => {
+    if (!xpToast) return undefined;
+    const timer = window.setTimeout(() => setXpToast(null), 3800);
+
+    return () => window.clearTimeout(timer);
+  }, [xpToast]);
+
+  useEffect(() => {
     const tg = getTelegram();
     if (!tg) return;
-    tg.expand?.();
+
+    const updateAppHeight = () => {
+      const height = Math.max(tg.viewportHeight || 0, window.innerHeight);
+      document.documentElement.style.setProperty("--app-height", `${height}px`);
+    };
+
+    const doExpand = () => {
+      tg.expand?.();
+      updateAppHeight();
+    };
+
+    tg.ready?.();
+    doExpand();
     tg.setHeaderColor?.("#ffffff");
     tg.setBackgroundColor?.("#fff8e1");
-    tg.ready?.();
+
+    const expandRetry = window.setTimeout(doExpand, 600);
+
+    const handleViewportChange = () => doExpand();
+    tg.onEvent?.("viewportChanged", handleViewportChange);
+
+    window.addEventListener("resize", updateAppHeight);
+    document.addEventListener("visibilitychange", doExpand);
+    return () => {
+      window.clearTimeout(expandRetry);
+      tg.offEvent?.("viewportChanged", handleViewportChange);
+      window.removeEventListener("resize", updateAppHeight);
+      document.removeEventListener("visibilitychange", doExpand);
+    };
   }, []);
 
   const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current;
+
     if (!canvas) return;
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -212,6 +425,7 @@ function Home() {
   useEffect(() => {
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
+
     return () => {
       window.removeEventListener("resize", resizeCanvas);
       if (animRef.current) cancelAnimationFrame(animRef.current);
@@ -222,129 +436,212 @@ function Home() {
     const loadAll = async () => {
       setError(null);
       setStuck(false);
+      setLoading(true);
+      const apiBase = resolveApiBase();
       const addLog = (msg: string) => {
         if (debugMode) {
-          setLogs((prev) => [...prev.slice(-10), `[${new Date().toISOString()}] ${msg}`]);
+          setLogs((prev) => [
+            ...prev.slice(-10),
+            `[${new Date().toISOString()}] ${msg}`,
+          ]);
         }
         console.log(msg);
       };
-      const tg = getTelegram();
-      let username = searchParams.get("username") || undefined;
-      let uid = searchParams.get("uid") || undefined;
-      const nameParam = searchParams.get("name") || undefined;
 
-      const tgUser = tg?.initDataUnsafe?.user;
-      if (tgUser) {
-        if (!uid) uid = String(tgUser.id);
-        if (!username) username = tgUser.username || undefined;
-      }
+      try {
+        addLog(`Build tag: ${BUILD_TAG}`);
+        addLog(`API base: ${apiBase || "(same origin)"}`);
+        const tg = getTelegram();
+        let username = searchParams.get("username") || undefined;
+        let uid = searchParams.get("uid") || undefined;
+        const nameParam = searchParams.get("name") || undefined;
 
-      const fallbackName = username ? `@${username}` : nameParam || "Player";
-      setPlayerName(fallbackName);
+        const tgUser = tg?.initDataUnsafe?.user;
 
-      // Carica configurazione di gioco (endpoint dedicato)
-      fetch(buildApiUrl("/gaming-config"), { cache: "no-store", mode: "cors" })
-        .then(async (res) => {
-          addLog(`GET /gaming-config -> ${res.status}`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const cfg = (await res.json()) as GameConfig;
-          setConfig(cfg);
-        })
-        .catch((err) => {
+        if (tgUser) {
+          if (!uid) uid = String(tgUser.id);
+          if (!username) username = tgUser.username || undefined;
+          if (tgUser.photo_url) setPhotoUrl(tgUser.photo_url);
+        }
+
+        const fallbackName = username ? `@${username}` : nameParam || "Player";
+
+        setPlayerName(fallbackName);
+
+        // Carica configurazione di gioco (endpoint dedicato) con log del body in caso di parse error
+        try {
+          const cfgRes = await fetch(buildApiUrl("/gaming-config", apiBase), {
+            cache: "no-store",
+            mode: "cors",
+          });
+
+          addLog(`GET /gaming-config -> ${cfgRes.status}`);
+          const cfgText = await cfgRes.text();
+
+          if (!cfgRes.ok)
+            throw new Error(`HTTP ${cfgRes.status} body: ${cfgText}`);
+          try {
+            const cfg = JSON.parse(cfgText) as GameConfig;
+
+            setConfig(cfg);
+          } catch (parseErr) {
+            throw new Error(
+              `Config JSON parse error: ${String(parseErr)} body: ${cfgText.slice(0, 200)}`,
+            );
+          }
+        } catch (err) {
           console.warn("Config load failed", err);
           setError("Config non disponibile");
           addLog(`Config error: ${String(err)}`);
-        });
-
-      if (!uid && !username) {
-        setError("Nessun username/uid fornito");
-        addLog("Stop: nessun uid/username");
-        return;
-      }
-
-      const qs = uid
-        ? `uid=${encodeURIComponent(uid)}`
-        : `username=${encodeURIComponent(username as string)}`;
-      const userUrl = buildApiUrl(`/webapp/userinfo?${qs}`);
-
-      try {
-        const res = await fetch(userUrl, { cache: "no-store" });
-        addLog(`GET ${userUrl} -> ${res.status}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as UserInfoResponse;
-
-        if (data.game_config) {
-          setConfig((prev) => prev || data.game_config || null);
         }
 
-        if (data.user) {
-          setUser(data.user);
-          setPlayerName(
-            data.user.username
-              ? `@${data.user.username}`
-              : data.user.name || fallbackName || "Player",
-          );
+        if (!uid && !username) {
+          setError("Nessun username/uid fornito");
+          addLog("Stop: nessun uid/username");
+
+          return;
         }
 
-        if (data.progress) setProgress(data.progress);
+        const qs = uid
+          ? `uid=${encodeURIComponent(uid)}`
+          : `username=${encodeURIComponent(username as string)}`;
+        const userUrl = buildApiUrl(`/webapp/userinfo?${qs}`, apiBase);
 
-        if (data.user?.id) {
-          const statsRes = await fetch(
-            buildApiUrl(`/user/${data.user.id}/stats`),
-            { cache: "no-store" },
-          );
-          addLog(`GET /user/${data.user.id}/stats -> ${statsRes.status}`);
-          if (statsRes.ok) {
-            const statsData = (await statsRes.json()) as UserStatsResponse;
-            if (statsData.progress) setProgress(statsData.progress);
-            const st = statsData.stats || {};
-            setStats({
-              today: st.poops_today ?? data.stats?.poops_today ?? 0,
-              total:
-                st.total_poops ??
-                st.poops_total ??
-                data.stats?.total_poops ??
-                0,
-              streak: st.streak_days ?? 0,
-              combo: st.best_combo ?? 0,
-            });
-            const unlocked = new Set<string>(
-              (statsData.achievements || []).map((a) => a.id),
+        try {
+          const res = await fetch(userUrl, { cache: "no-store" });
+
+          addLog(`GET ${userUrl} -> ${res.status}`);
+          const userText = await res.text();
+
+          if (!res.ok) throw new Error(`HTTP ${res.status} body: ${userText}`);
+          let data: UserInfoResponse;
+
+          try {
+            data = JSON.parse(userText) as UserInfoResponse;
+          } catch (parseErr) {
+            throw new Error(
+              `Userinfo JSON parse error: ${String(parseErr)} body: ${userText.slice(0, 200)}`,
             );
-            setUnlockedIds(unlocked);
-          } else if (data.stats) {
-            setStats({
-              today: data.stats.poops_today ?? 0,
-              total:
-                data.stats.total_poops ??
-                data.stats.poops_total ??
-                data.stats.total ??
-                0,
-              streak: data.stats.streak_days ?? 0,
-              combo: data.stats.best_combo ?? 0,
-            });
           }
+
+          if (data.game_config) {
+            setConfig((prev) => prev || data.game_config || null);
+          }
+
+          if (data.user) {
+            setUser(data.user);
+            setPlayerName(
+              data.user.username
+                ? `@${data.user.username}`
+                : data.user.name || fallbackName || "Player",
+            );
+            if (data.user.photo_url) {
+              setPhotoUrl((prev) => prev || data.user?.photo_url || null);
+            }
+          }
+
+          if (data.progress) setProgress(data.progress);
+
+          if (data.user?.id) {
+            const statsRes = await fetch(
+              buildApiUrl(`/user/${data.user.id}/stats`, apiBase),
+              { cache: "no-store" },
+            );
+
+            addLog(`GET /user/${data.user.id}/stats -> ${statsRes.status}`);
+            if (statsRes.ok) {
+              const statsText = await statsRes.text();
+              let statsData: UserStatsResponse;
+
+              try {
+                statsData = JSON.parse(statsText) as UserStatsResponse;
+              } catch (parseErr) {
+                throw new Error(
+                  `Stats JSON parse error: ${String(parseErr)} body: ${statsText.slice(0, 200)}`,
+                );
+              }
+              if (statsData.progress) setProgress(statsData.progress);
+              const st = statsData.stats || {};
+
+              setStats({
+                today: st.poops_today ?? data.stats?.poops_today ?? 0,
+                total:
+                  st.total_poops ??
+                  st.poops_total ??
+                  data.stats?.total_poops ??
+                  0,
+                streak: st.streak_days ?? 0,
+                combo: st.best_combo ?? 0,
+                consistencyCounts:
+                  st.consistency_counts ||
+                  data.stats?.consistency_counts ||
+                  stats.consistencyCounts,
+                sizeCounts:
+                  st.size_counts || data.stats?.size_counts || stats.sizeCounts,
+                locationCounts:
+                  st.location_counts ||
+                  data.stats?.location_counts ||
+                  stats.locationCounts,
+              });
+              const unlocked = new Set<string>(
+                (statsData.achievements || []).map((a) => a.id),
+              );
+
+              setUnlockedIds(unlocked);
+            } else if (data.stats) {
+              setStats({
+                today: data.stats.poops_today ?? 0,
+                total:
+                  data.stats.total_poops ??
+                  data.stats.poops_total ??
+                  data.stats.total ??
+                  0,
+                streak: data.stats.streak_days ?? 0,
+                combo: data.stats.best_combo ?? 0,
+                consistencyCounts:
+                  data.stats.consistency_counts || stats.consistencyCounts,
+                sizeCounts: data.stats.size_counts || stats.sizeCounts,
+                locationCounts:
+                  data.stats.location_counts || stats.locationCounts,
+              });
+            }
+          }
+        } catch (err) {
+          console.warn("Errore userinfo", err);
+          setError("Impossibile caricare i dati utente");
+          setPlayerName("Offline");
+          addLog(`Userinfo error: ${String(err)}`);
         }
-      } catch (err) {
-        console.warn("Errore userinfo", err);
-        setError("Impossibile caricare i dati utente");
-        setPlayerName("Offline");
-        addLog(`Userinfo error: ${String(err)}`);
+      } finally {
+        setLoading(false);
       }
     };
 
     loadAll();
-    const timer = window.setTimeout(() => {
-      if (!config) setStuck(true);
-    }, 5000);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    return () => {};
   }, [searchParams]);
+
+  useEffect(() => {
+    if (config) {
+      setStuck(false);
+
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setStuck(true);
+      setLoading(false);
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [config]);
 
   const animateConfetti = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !modalOpen) return;
+
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
+
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -361,10 +658,11 @@ function Home() {
     if (confettiRef.current.length) {
       animRef.current = requestAnimationFrame(animateConfetti);
     }
-  }, [modalOpen]);
+  }, []);
 
   const fireConfetti = useCallback(() => {
     const pieces: ConfettiPiece[] = [];
+
     for (let i = 0; i < 80; i += 1) {
       pieces.push({
         x: window.innerWidth / 2,
@@ -383,12 +681,92 @@ function Home() {
 
   const handleSelect = (group: "type" | "size" | "loc", value: string) => {
     const tg = getTelegram();
+
     if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
     setSelection((prev) => ({ ...prev, [group]: value }));
+    if (group === "loc") {
+      setGeoError(null);
+    }
+  };
+
+  const geolocationCfg = config?.geolocation;
+  const geoSupported = useMemo(
+    () => typeof navigator !== "undefined" && Boolean(navigator.geolocation),
+    [],
+  );
+  const geoBlockedSet = useMemo(() => {
+    const blocked = new Set<string>([
+      "home",
+      "work",
+      ...(geolocationCfg?.blocked_locations || []),
+    ]);
+
+    return blocked;
+  }, [geolocationCfg]);
+  const geoAllowedSet = useMemo(
+    () => new Set<string>(geolocationCfg?.allowed_locations || []),
+    [geolocationCfg],
+  );
+  const shouldCaptureGeo = useMemo(() => {
+    if (!geolocationCfg?.enabled) return false;
+    if (!geoSupported) return false;
+    if (!selection.loc) return false;
+    if (geoBlockedSet.has(selection.loc)) return false;
+    if (geoAllowedSet.size > 0) return geoAllowedSet.has(selection.loc);
+
+    return selection.loc !== "home" && selection.loc !== "work";
+  }, [
+    geolocationCfg,
+    geoSupported,
+    selection.loc,
+    geoBlockedSet,
+    geoAllowedSet,
+  ]);
+
+  useEffect(() => {
+    if (!shouldCaptureGeo) {
+      setGeoData(null);
+      setGeoError(null);
+      setGeoLoading(false);
+    }
+  }, [shouldCaptureGeo]);
+
+  const requestGeolocation = () => {
+    if (!geolocationCfg?.enabled) return;
+    if (!geoSupported || !navigator.geolocation) {
+      setGeoError("Geolocalizzazione non supportata dal dispositivo.");
+
+      return;
+    }
+    setGeoLoading(true);
+    setGeoError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGeoData({
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+          accuracy: pos.coords.accuracy
+            ? Math.round(pos.coords.accuracy)
+            : undefined,
+          timestamp: pos.timestamp,
+        });
+        setGeoLoading(false);
+      },
+      (err) => {
+        setGeoError(err.message || "Impossibile ottenere la posizione.");
+        setGeoLoading(false);
+      },
+      {
+        enableHighAccuracy: geolocationCfg?.accuracy === "high",
+        maximumAge: 0,
+        timeout: 8000,
+      },
+    );
   };
 
   const startFlush = async () => {
-    if (!isReady || !user || !config) return;
+    if (!isReady || !user || !config || saving) return;
+    setSaving(true);
 
     const tg = getTelegram();
     const submission = { ...selection };
@@ -398,6 +776,9 @@ function Home() {
       size: submission.size,
       location: submission.loc,
       note: undefined,
+      ...(shouldCaptureGeo && geoData
+        ? { lat: geoData.lat, lng: geoData.lng, accuracy: geoData.accuracy }
+        : {}),
     };
 
     try {
@@ -410,9 +791,18 @@ function Home() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
-      setModalXp(data.xp_gain || 0);
-      setModalOpen(true);
       fireConfetti();
+      const xpFillPercent = data.progress?.xp_for_next
+        ? ((data.progress?.xp_in_level || 0) /
+            (data.progress?.xp_for_next || 1)) *
+          100
+        : xpPerc;
+
+      setXpToast({
+        delta: data.xp_gain || 0,
+        level: data.progress?.level ?? progress?.level,
+        fillPercent: xpFillPercent,
+      });
 
       if (data.progress) setProgress(data.progress);
       if (data.stats) {
@@ -423,44 +813,80 @@ function Home() {
             data.stats.poops_total ??
             data.stats.total ??
             prev.total,
-          streak: prev.streak,
-          combo: prev.combo,
+          streak: data.stats.streak_days ?? prev.streak,
+          combo: data.stats.best_combo ?? prev.combo,
+          consistencyCounts:
+            data.stats.consistency_counts || prev.consistencyCounts,
+          sizeCounts: data.stats.size_counts || prev.sizeCounts,
+          locationCounts: data.stats.location_counts || prev.locationCounts,
         }));
       } else {
-        setStats((prev) => ({ ...prev, today: prev.today + 1 }));
+        setStats((prev) => {
+          const nextConsistency = { ...(prev.consistencyCounts || {}) };
+          const nextSize = { ...(prev.sizeCounts || {}) };
+          const nextLocation = { ...(prev.locationCounts || {}) };
+
+          if (submission.type) {
+            nextConsistency[submission.type] =
+              (nextConsistency[submission.type] || 0) + 1;
+          }
+          if (submission.size) {
+            nextSize[submission.size] = (nextSize[submission.size] || 0) + 1;
+          }
+          if (submission.loc) {
+            nextLocation[submission.loc] =
+              (nextLocation[submission.loc] || 0) + 1;
+          }
+
+          return {
+            ...prev,
+            today: prev.today + 1,
+            total: prev.total + 1,
+            consistencyCounts: nextConsistency,
+            sizeCounts: nextSize,
+            locationCounts: nextLocation,
+          };
+        });
       }
 
-      setLastSubmission(submission);
       const newUnlocked = new Set(unlockedIds);
-      (data.unlocked_achievements || []).forEach(
-        (a: { id: string }) => newUnlocked.add(a.id),
-      );
+      const newlyUnlocked: AchievementDef[] = data.unlocked_achievements || [];
+
+      newlyUnlocked.forEach((a) => newUnlocked.add(a.id));
       setUnlockedIds(newUnlocked);
       setAchievements(buildAchievements(config, newUnlocked));
+      if (newlyUnlocked.length) {
+        setRecentAch(
+          newlyUnlocked.map((a) => ({
+            id: a.id,
+            title: a.title || a.label || a.id,
+            emoji: a.emoji || "🏆",
+            description: a.description,
+            year: a.year,
+            unlocked: true,
+          })),
+        );
+      }
 
       resetSelections();
       if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
     } catch (err) {
       console.error("Errore nel salvataggio", err);
       setError("Errore durante il salvataggio");
+    } finally {
+      setSaving(false);
     }
-  };
-
-  const closeModal = () => {
-    const tg = getTelegram();
-    if (tg?.sendData) {
-      tg.sendData(JSON.stringify(lastSubmission));
-      tg.close?.();
-      return;
-    }
-    setModalOpen(false);
   };
 
   const renderGrid = (
     entries: Record<string, OptionCfg> | undefined,
     group: "type" | "size" | "loc",
   ) => {
-    if (!entries) return <p style={{ color: "#8d6e63", margin: "8px 0" }}>Caricamento...</p>;
+    if (!entries)
+      return (
+        <p style={{ color: "#8d6e63", margin: "8px 0" }}>Caricamento...</p>
+      );
+
     return Object.entries(entries).map(([key, cfg]) => (
       <div
         key={`${group}-${key}`}
@@ -473,13 +899,29 @@ function Home() {
     ));
   };
 
+  const selectedLocationLabel =
+    selection.loc && config?.location?.[selection.loc]?.label
+      ? config.location[selection.loc]?.label || selection.loc
+      : selection.loc;
+
+  const closeAchToast = () => setRecentAch([]);
+  const closeMenu = () => setMenuOpen(false);
+  const unlockedCount = useMemo(
+    () => achievements.filter((ach) => ach.unlocked).length,
+    [achievements],
+  );
+
   return (
     <>
       <canvas ref={canvasRef} id="confettiCanvas" />
 
+      <XpToast xp={xpToast} />
+
       <header>
         <div className="status-panel">
-          <div className="avatar">💩</div>
+          <div className={`avatar ${photoUrl ? "with-photo" : ""}`}>
+            {photoUrl ? <img alt="" src={photoUrl} /> : "💩"}
+          </div>
           <div className="stats">
             <div className="name" id="playerName">
               {playerName}
@@ -498,8 +940,12 @@ function Home() {
             </div>
           </div>
         </div>
-        <button className="menu-btn" onClick={() => setAchOpen(true)}>
-          🏆
+        <button
+          aria-label="Menu"
+          className="menu-btn"
+          onClick={() => setMenuOpen(true)}
+        >
+          <Menu size={26} />
         </button>
       </header>
 
@@ -508,57 +954,28 @@ function Home() {
       ) : null}
       {stuck ? (
         <p style={{ color: "#b71c1c", fontWeight: 800 }}>
-          Timeout nel caricamento. Controlla rete/HTTPS e prova a ricaricare con un cache-bust diverso.
+          Timeout nel caricamento. Controlla rete/HTTPS e prova a ricaricare con
+          un cache-bust diverso.
         </p>
       ) : null}
-      {debugMode && logs.length ? (
-        <div
-          style={{
-            background: "#000000aa",
-            color: "#fff",
-            padding: "10px",
-            borderRadius: 10,
-            fontSize: "0.75rem",
-            marginTop: 10,
-            maxHeight: 200,
-            overflow: "auto",
-          }}
-        >
-          <div style={{ fontWeight: 800, marginBottom: 4 }}>Debug log</div>
-          {logs.map((l, i) => (
-            <div key={i}>{l}</div>
-          ))}
-        </div>
-      ) : null}
-
       {!config ? (
-        <p style={{ color: "#8d6e63", fontWeight: 800 }}>Caricamento config...</p>
+        <p style={{ color: "#8d6e63", fontWeight: 800 }}>
+          Caricamento config...
+        </p>
       ) : (
         <>
-          <div className="dashboard">
-            <div className="score-box">
-              <div className="score-label">Oggi</div>
-              <div className="score-val today" id="countToday">
+          <div className="pocket-stats">
+            <div className="score-pill score-today">
+              <span className="pill-label">Oggi</span>
+              <span className="pill-value" id="countToday">
                 {stats.today}
-              </div>
+              </span>
             </div>
-            <div className="score-box">
-              <div className="score-label">Totale</div>
-              <div className="score-val total" id="countTotal">
+            <div className="score-pill score-total">
+              <span className="pill-label">Totale</span>
+              <span className="pill-value" id="countTotal">
                 {stats.total}
-              </div>
-            </div>
-            <div className="score-box">
-              <div className="score-label">Streak Giorni</div>
-              <div className="score-val streak" id="streakDays">
-                {stats.streak}
-              </div>
-            </div>
-            <div className="score-box">
-              <div className="score-label">Miglior Combo</div>
-              <div className="score-val combo" id="comboBest">
-                {stats.combo}
-              </div>
+              </span>
             </div>
           </div>
 
@@ -577,10 +994,45 @@ function Home() {
             {renderGrid(config.location, "loc")}
           </div>
 
+          {shouldCaptureGeo ? (
+            <div aria-live="polite" className="geo-panel">
+              <div className="geo-row">
+                <div className="geo-title">
+                  <span className="geo-dot-mini" />
+                  <span>{selectedLocationLabel || "Posizione"}</span>
+                </div>
+                <button
+                  className="geo-btn"
+                  disabled={geoLoading}
+                  onClick={requestGeolocation}
+                >
+                  {geoLoading ? "Rilevo…" : geoData ? "Aggiorna" : "Posizione"}
+                </button>
+              </div>
+              <div className="geo-line">
+                {geoData ? (
+                  <>
+                    <span>
+                      {geoData.lat.toFixed(5)}, {geoData.lng.toFixed(5)}
+                    </span>
+                    {geoData.accuracy ? (
+                      <span className="geo-accuracy">±{geoData.accuracy}m</span>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="geo-hint-inline">
+                    Coordinate non ancora inserite
+                  </span>
+                )}
+              </div>
+              {geoError ? <div className="geo-error">{geoError}</div> : null}
+            </div>
+          ) : null}
+
           <div className="dock">
             <div
-              id="mainBtn"
               className={`action ${isReady && config ? "ready" : ""}`}
+              id="mainBtn"
               onClick={startFlush}
             >
               FLUSH IT! 🚽
@@ -589,39 +1041,149 @@ function Home() {
         </>
       )}
 
-      <div id="modal" style={{ display: modalOpen ? "flex" : "none" }}>
-        <div className="modal-box">
-          <h1 style={{ fontFamily: "Titan One", color: "#e65100", margin: 0 }}>
-            OTTIMO LAVORO!
-          </h1>
-          <div className="trophy-anim">🚽</div>
-          <div id="modalXp">+{modalXp} XP</div>
-          <button id="okBtn" className="ok" onClick={closeModal}>
-            CONTINUA
-          </button>
+      <AchievementToast items={recentAch} onClose={closeAchToast} />
+
+      {menuOpen ? (
+        <div aria-hidden={!menuOpen} className="nav-overlay">
+          <div className="nav-panel">
+            <div className="nav-header">
+              <div className="nav-logo">💩</div>
+              <button
+                aria-label="Chiudi menu"
+                className="nav-close"
+                onClick={closeMenu}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="nav-items">
+              <button
+                className={`nav-item ${currentSection === "pooplog" ? "active" : ""}`}
+                onClick={() => {
+                  setCurrentSection("pooplog");
+                  closeMenu();
+                }}
+              >
+                <MapPin size={18} /> PoopLog
+              </button>
+              <button
+                className={`nav-item ${currentSection === "classifiche" ? "active" : ""}`}
+                onClick={() => {
+                  setCurrentSection("classifiche");
+                  closeMenu();
+                }}
+              >
+                <Crown size={18} /> Classifiche
+              </button>
+              <button
+                className={`nav-item ${currentSection === "poopbucket" ? "active" : ""}`}
+                onClick={() => {
+                  setCurrentSection("poopbucket");
+                  closeMenu();
+                }}
+              >
+                <Trophy size={18} /> Poopbucket
+              </button>
+              <button
+                className={`nav-item ${currentSection === "achievements" ? "active" : ""}`}
+                onClick={() => {
+                  setCurrentSection("achievements");
+                  closeMenu();
+                  setAchOpen(true);
+                }}
+              >
+                <Trophy size={18} /> Achievements
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div
+        aria-hidden={!achOpen}
         id="achOverlay"
         style={{ display: achOpen ? "flex" : "none" }}
-        aria-hidden={!achOpen}
       >
         <div className="ach-panel">
           <div className="ach-header">
-            <h1>Collezione</h1>
-            <div style={{ fontSize: "1.5rem" }}>🏆</div>
-          </div>
-          <div className="ach-grid" id="achGridContainer">
-            {achievements.map((ach) => (
-              <div
-                key={ach.id}
-                className={`ach-item ${ach.unlocked ? "unlocked" : "locked"}`}
-              >
-                <div className="ach-icon">{ach.emoji}</div>
-                <div className="ach-name">{ach.title}</div>
+            <div className="ach-title">
+              <h1>Collezione</h1>
+              <p>Obiettivi, descrizioni e progresso</p>
+            </div>
+            <div className="ach-legend">
+              <div className="ach-pill">
+                <span className="pill-label">Sbloccati</span>
+                <span className="pill-value">
+                  {unlockedCount}/{achievements.length}
+                </span>
               </div>
-            ))}
+              <div className="ach-pill secondary">
+                <span className="pill-label">Totale log</span>
+                <span className="pill-value">{stats.total}</span>
+              </div>
+            </div>
+          </div>
+          <div className="ach-list" id="achGridContainer">
+            {achievements.length ? (
+              achievements.map((ach) => {
+                const progress = ach.progress;
+                return (
+                  <div
+                    key={ach.id}
+                    className={`ach-row ${ach.unlocked ? "unlocked" : "locked"}`}
+                  >
+                    <div className="ach-icon-box">
+                      <div className="ach-icon">{ach.emoji}</div>
+                      <div className="ach-status-badge">
+                        {ach.unlocked ? "Sbloccato" : "In corso"}
+                      </div>
+                    </div>
+                    <div className="ach-body">
+                      <div className="ach-title-row">
+                        <div className="ach-name">{ach.title}</div>
+                        <div className="ach-tags">
+                          {ach.year ? (
+                            <span className="ach-tag">📅 {ach.year}</span>
+                          ) : null}
+                          {ach.unlocked ? (
+                            <span className="ach-tag success">✔</span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="ach-desc">
+                        {ach.description ||
+                          "Nuovo badge aggiunto alla tua collezione."}
+                      </div>
+                      {progress ? (
+                        <div className="ach-progress">
+                          <div className="ach-progress-top">
+                            <span>{progress.label}</span>
+                            <span className="ach-progress-num">
+                              {Math.min(progress.current, progress.target)} /{" "}
+                              {progress.target}
+                            </span>
+                          </div>
+                          <div className="ach-progress-track">
+                            <div
+                              className="ach-progress-fill"
+                              style={{ width: `${progress.pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="ach-progress-hint">
+                          {ach.unlocked
+                            ? "Obiettivo completato."
+                            : "Obiettivo segreto/evento: continua a giocare!"}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="ach-empty">Nessun achievement disponibile.</p>
+            )}
           </div>
           <button className="close-btn" onClick={() => setAchOpen(false)}>
             CHIUDI X
@@ -629,39 +1191,31 @@ function Home() {
         </div>
       </div>
 
-      <style jsx global>{`
-        :root {
-          --bg: #fff8e1;
-          --brown: #4e342e;
-          --panel: #ffffff;
-          --accent: #ffb74d;
-          --accent-dark: #f57c00;
-          --green: #66bb6a;
-          --green-dark: #388e3c;
-          --blue: #42a5f5;
-          --blue-dark: #1565c0;
-          --red: #ef5350;
-          --border-radius: 20px;
-          --border-width: 3px;
-        }
+      <LoaderOverlay
+        emoji="🧻"
+        show={loading}
+        subtitle="Tieni il naso chiuso: stiamo lucidando la plancia di comando!"
+        title="Carichiamo i tuoi dati"
+      />
 
+      <LoaderOverlay
+        emoji="🚀"
+        show={saving}
+        subtitle="Stiamo spedendo la tua epica flushata al quartier generale…"
+        title="Flush in corso"
+      />
+
+      <style global jsx>{`
         * {
           box-sizing: border-box;
           user-select: none;
           -webkit-tap-highlight-color: transparent;
         }
 
-        body {
-          font-family: "Nunito", sans-serif;
-          margin: 0;
-          background-color: var(--bg);
-          background-image: radial-gradient(var(--accent) 15%, transparent 16%),
-            radial-gradient(var(--accent) 15%, transparent 16%);
-          background-size: 20px 20px;
-          background-position: 0 0, 10px 10px;
-          padding: 20px 15px 120px 15px;
-          color: var(--brown);
-          overflow-x: hidden;
+        html,
+        body,
+        #__next {
+          height: 100%;
         }
 
         header {
@@ -697,6 +1251,13 @@ function Home() {
           align-items: center;
           animation: bounce 2s infinite ease-in-out;
           flex-shrink: 0;
+          overflow: hidden;
+        }
+
+        .avatar img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
         }
 
         @keyframes bounce {
@@ -783,54 +1344,49 @@ function Home() {
           box-shadow: 0px 2px 0px rgba(78, 52, 46, 0.2);
         }
 
-        .dashboard {
+        .pocket-stats {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 15px;
-          margin-bottom: 25px;
+          gap: 8px;
+          margin-bottom: 18px;
         }
 
-        .score-box {
-          background: var(--panel);
-          border: var(--border-width) solid var(--brown);
-          border-radius: 16px;
-          padding: 10px;
-          text-align: center;
-          box-shadow: 0px 4px 0px rgba(78, 52, 46, 0.2);
+        .score-pill {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 12px;
+          border: 3px solid var(--brown);
+          border-radius: 14px;
+          background: #fff;
+          box-shadow: 0px 3px 0px rgba(78, 52, 46, 0.15);
         }
 
-        .score-label {
-          font-size: 0.8rem;
+        .score-pill.score-today {
+          background: linear-gradient(135deg, #eef6ff 0%, #ffffff 70%);
+          border-color: #1565c0;
+        }
+
+        .score-pill.score-total {
+          background: linear-gradient(135deg, #eef9ef 0%, #ffffff 70%);
+          border-color: #2e7d32;
+        }
+
+        .pill-label {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
           font-weight: 800;
           text-transform: uppercase;
-          color: #8d6e63;
-          margin-bottom: 2px;
+          color: #5d4037;
+          font-size: 0.8rem;
         }
 
-        .score-val {
+        .pill-value {
           font-family: "Titan One";
-          font-size: 2rem;
-          line-height: 1;
-        }
-
-        .score-val.today {
-          color: var(--blue-dark);
-          text-shadow: 2px 2px 0px #bbdefb;
-        }
-
-        .score-val.total {
-          color: var(--green-dark);
-          text-shadow: 2px 2px 0px #c8e6c9;
-        }
-
-        .score-val.streak {
-          color: #fbc02d;
-          text-shadow: 2px 2px 0px #fff59d;
-        }
-
-        .score-val.combo {
-          color: #ab47bc;
-          text-shadow: 2px 2px 0px #e1bee7;
+          font-size: 1.6rem;
+          color: #2e1b14;
         }
 
         h2 {
@@ -911,6 +1467,96 @@ function Home() {
           justify-content: center;
         }
 
+        .geo-panel {
+          margin-top: 12px;
+          background: var(--panel);
+          border: var(--border-width) solid var(--brown);
+          border-radius: 14px;
+          padding: 10px 12px;
+          box-shadow: 0px 4px 0px rgba(78, 52, 46, 0.15);
+        }
+
+        .geo-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          justify-content: space-between;
+          flex-wrap: wrap;
+        }
+
+        .geo-title {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          font-size: 0.85rem;
+          color: #3e2723;
+        }
+
+        .geo-dot-mini {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: var(--accent-dark);
+          box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.25);
+        }
+
+        .geo-btn {
+          background: var(--blue);
+          color: white;
+          font-weight: 800;
+          border: 3px solid var(--brown);
+          border-radius: 12px;
+          padding: 8px 12px;
+          cursor: pointer;
+          box-shadow: 0px 4px 0px var(--brown);
+          transition: 0.1s;
+          font-size: 0.9rem;
+        }
+
+        .geo-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+          box-shadow: none;
+          transform: none;
+        }
+
+        .geo-btn:active {
+          transform: translateY(2px);
+          box-shadow: 0px 1px 0px var(--brown);
+        }
+
+        .geo-line {
+          margin-top: 6px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 800;
+          font-size: 0.88rem;
+          color: #2e1b14;
+        }
+
+        .geo-accuracy {
+          color: #5d4037;
+          font-weight: 800;
+          font-size: 0.85rem;
+        }
+
+        .geo-hint-inline {
+          color: #795548;
+          font-weight: 800;
+          font-size: 0.85rem;
+        }
+
+        .geo-error {
+          margin-top: 6px;
+          color: #b71c1c;
+          font-weight: 800;
+          font-size: 0.9rem;
+        }
+
         .dock {
           margin-top: 30px;
           display: flex;
@@ -963,6 +1609,107 @@ function Home() {
           }
         }
 
+        .nav-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.65);
+          backdrop-filter: blur(3px);
+          display: flex;
+          justify-content: flex-end;
+          z-index: 2000;
+        }
+
+        .nav-panel {
+          width: 78%;
+          max-width: 340px;
+          background: #fff8e1;
+          border-left: 4px solid var(--brown);
+          box-shadow: -6px 0 20px rgba(0, 0, 0, 0.25);
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          animation: slideIn 0.25s ease;
+        }
+
+        .nav-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .nav-logo {
+          width: 46px;
+          height: 46px;
+          border-radius: 12px;
+          border: 3px solid var(--brown);
+          background: radial-gradient(circle at 30% 30%, #fffdf5, #ffc178);
+          display: grid;
+          place-items: center;
+          font-size: 1.6rem;
+          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.15);
+        }
+
+        .nav-close {
+          background: #fff;
+          border: 2px solid var(--brown);
+          border-radius: 12px;
+          width: 36px;
+          height: 36px;
+          display: grid;
+          place-items: center;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-close:active {
+          transform: translateY(2px);
+          box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-items {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .nav-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          border: 2px solid var(--brown);
+          background: linear-gradient(120deg, #fff9c4, #ffe0b2);
+          border-radius: 14px;
+          padding: 12px;
+          font-weight: 800;
+          color: #3e2723;
+          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.1);
+          cursor: pointer;
+          font-size: 1rem;
+          justify-content: flex-start;
+        }
+
+        .nav-item:active {
+          transform: translateY(2px);
+          box-shadow: 0px 2px 0px rgba(0, 0, 0, 0.15);
+        }
+
+        .nav-item.active {
+          border-color: #3e2723;
+          background: linear-gradient(120deg, #ffb74d, #ff9800);
+          box-shadow: 0px 4px 0px rgba(62, 39, 35, 0.2);
+        }
+
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+          }
+          to {
+            transform: translateX(0);
+          }
+        }
+
         #achOverlay {
           position: fixed;
           inset: 0;
@@ -987,7 +1734,8 @@ function Home() {
 
         .ach-panel {
           width: 90%;
-          height: 85%;
+          max-width: 960px;
+          height: 86%;
           background: #fff8e1;
           border: 4px solid var(--brown);
           border-radius: 24px;
@@ -1011,78 +1759,238 @@ function Home() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 20px;
+          gap: 12px;
+          margin-bottom: 16px;
           border-bottom: 2px dashed var(--brown);
-          padding-bottom: 10px;
+          padding-bottom: 12px;
+          flex-wrap: wrap;
         }
 
-        .ach-header h1 {
+        .ach-title {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .ach-title h1 {
           margin: 0;
           font-family: "Titan One";
           font-size: 1.8rem;
           color: var(--brown);
         }
 
-        .ach-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
+        .ach-title p {
+          margin: 4px 0 0;
+          color: #5d4037;
+          font-weight: 700;
+          font-size: 0.95rem;
+        }
+
+        .ach-legend {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .ach-pill {
+          background: #fff9c4;
+          border: 2px solid var(--brown);
+          border-radius: 14px;
+          padding: 8px 12px;
+          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.15);
+          display: flex;
+          flex-direction: column;
+          min-width: 90px;
+        }
+
+        .ach-pill.secondary {
+          background: #fff;
+        }
+
+        .pill-label {
+          color: #5d4037;
+          font-weight: 700;
+          font-size: 0.8rem;
+        }
+
+        .pill-value {
+          color: var(--brown);
+          font-weight: 900;
+          font-size: 1.1rem;
+        }
+
+        .ach-list {
+          display: flex;
+          flex-direction: column;
           gap: 12px;
           overflow-y: auto;
-          padding-right: 5px;
+          padding-right: 6px;
           flex: 1;
         }
 
-        .ach-grid::-webkit-scrollbar {
+        .ach-list::-webkit-scrollbar {
           width: 6px;
         }
 
-        .ach-grid::-webkit-scrollbar-thumb {
+        .ach-list::-webkit-scrollbar-thumb {
           background: var(--brown);
           border-radius: 4px;
         }
 
-        .ach-item {
+        .ach-row {
+          display: grid;
+          grid-template-columns: auto 1fr;
+          gap: 12px;
+          align-items: flex-start;
           background: #fff;
           border: 3px solid var(--brown);
           border-radius: 16px;
-          padding: 15px 5px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          text-align: center;
-          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.1);
+          padding: 12px;
+          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.12);
           position: relative;
         }
 
-        .ach-item.locked {
-          background: #e0e0e0;
-          border-color: #9e9e9e;
-          filter: grayscale(1);
-          opacity: 0.7;
-        }
-
-        .ach-item.locked::after {
-          content: "🔒";
-          position: absolute;
-          top: 5px;
-          right: 5px;
-        }
-
-        .ach-item.unlocked {
+        .ach-row.unlocked {
           background: #fff9c4;
           border-color: var(--accent-dark);
           box-shadow: 0px 4px 0px var(--accent-dark);
         }
 
+        .ach-row.locked {
+          background: #f0f0f0;
+          border-color: #bdbdbd;
+        }
+
+        .ach-icon-box {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          min-width: 68px;
+        }
+
         .ach-icon {
-          font-size: 2.5rem;
-          margin-bottom: 5px;
+          font-size: 2.4rem;
+          filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.15));
+        }
+
+        .ach-status-badge {
+          background: #fff;
+          border: 2px solid var(--brown);
+          border-radius: 10px;
+          padding: 4px 8px;
+          font-weight: 800;
+          font-size: 0.75rem;
+          color: var(--brown);
+          box-shadow: 0px 2px 0px rgba(0, 0, 0, 0.15);
+        }
+
+        .ach-row.locked .ach-status-badge {
+          background: #efebe9;
+          border-color: #a1887f;
+          color: #5d4037;
+        }
+
+        .ach-body {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .ach-title-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
         }
 
         .ach-name {
           font-weight: 800;
-          font-size: 0.9rem;
+          font-size: 1rem;
           line-height: 1.2;
+          color: var(--brown);
+        }
+
+        .ach-tags {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+
+        .ach-tag {
+          background: #fff0c2;
+          border: 1px solid var(--brown);
+          border-radius: 999px;
+          padding: 2px 8px;
+          font-weight: 700;
+          font-size: 0.75rem;
+          color: #3e2723;
+        }
+
+        .ach-tag.success {
+          background: #c8e6c9;
+          border-color: var(--green-dark);
+          color: var(--green-dark);
+        }
+
+        .ach-desc {
+          color: #5d4037;
+          font-size: 0.9rem;
+          line-height: 1.3;
+        }
+
+        .ach-progress {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          margin-top: 4px;
+        }
+
+        .ach-progress-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-weight: 800;
+          color: #4e342e;
+          font-size: 0.85rem;
+        }
+
+        .ach-progress-num {
+          font-variant-numeric: tabular-nums;
+        }
+
+        .ach-progress-track {
+          width: 100%;
+          height: 12px;
+          border-radius: 999px;
+          border: 2px solid var(--brown);
+          overflow: hidden;
+          background: #ffe8c3;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+        }
+
+        .ach-progress-fill {
+          height: 100%;
+          background: linear-gradient(90deg, #ffb74d, #ff9800);
+          width: 0%;
+          transition: width 0.3s ease;
+        }
+
+        .ach-progress-hint {
+          color: #6d4c41;
+          font-weight: 700;
+          font-size: 0.85rem;
+          margin-top: 4px;
+        }
+
+        .ach-empty {
+          color: #5d4037;
+          font-weight: 800;
+          text-align: center;
+          padding: 16px 0;
         }
 
         .close-btn {
@@ -1104,80 +2012,6 @@ function Home() {
           box-shadow: none;
         }
 
-        #modal {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.8);
-          display: none;
-          justify-content: center;
-          align-items: center;
-          z-index: 3000;
-        }
-
-        .modal-box {
-          background: white;
-          border: 4px solid var(--brown);
-          border-radius: 24px;
-          padding: 30px;
-          text-align: center;
-          width: 85%;
-          max-width: 350px;
-          box-shadow: 0px 10px 0px var(--accent);
-          animation: pop 0.4s ease;
-        }
-
-        @keyframes pop {
-          from {
-            transform: scale(0.5);
-          }
-          to {
-            transform: scale(1);
-          }
-        }
-
-        .trophy-anim {
-          font-size: 5rem;
-          margin: 10px 0;
-          animation: wiggle 2s infinite;
-        }
-
-        @keyframes wiggle {
-          0%,
-          100% {
-            transform: rotate(0deg);
-          }
-          25% {
-            transform: rotate(-5deg);
-          }
-          75% {
-            transform: rotate(5deg);
-          }
-        }
-
-        #modalXp {
-          font-size: 2rem;
-          font-family: "Titan One";
-          color: var(--green-dark);
-          margin-bottom: 20px;
-        }
-
-        .ok {
-          width: 100%;
-          padding: 12px;
-          font-size: 1.4rem;
-          font-family: "Titan One";
-          background: var(--green);
-          border: 3px solid var(--brown);
-          border-radius: 14px;
-          color: white;
-          box-shadow: 0px 5px 0px var(--brown);
-        }
-
-        .ok:active {
-          transform: translateY(5px);
-          box-shadow: none;
-        }
-
         #confettiCanvas {
           position: fixed;
           top: 0;
@@ -1187,6 +2021,111 @@ function Home() {
           pointer-events: none;
           z-index: 999;
         }
+
+        .nav-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.65);
+          backdrop-filter: blur(3px);
+          display: flex;
+          justify-content: flex-end;
+          z-index: 2000;
+        }
+
+        .nav-panel {
+          width: 78%;
+          max-width: 340px;
+          background: #fff8e1;
+          border-left: 4px solid var(--brown);
+          box-shadow: -6px 0 20px rgba(0, 0, 0, 0.25);
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          animation: slideIn 0.25s ease;
+        }
+
+        .nav-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .nav-logo {
+          width: 46px;
+          height: 46px;
+          border-radius: 12px;
+          border: 3px solid var(--brown);
+          background: radial-gradient(circle at 30% 30%, #fffdf5, #ffc178);
+          display: grid;
+          place-items: center;
+          font-size: 1.6rem;
+          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.15);
+        }
+
+        .nav-close {
+          background: #fff;
+          border: 2px solid var(--brown);
+          border-radius: 12px;
+          width: 36px;
+          height: 36px;
+          display: grid;
+          place-items: center;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-close:active {
+          transform: translateY(2px);
+          box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-items {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .nav-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          border: 2px solid var(--brown);
+          background: linear-gradient(120deg, #fff9c4, #ffe0b2);
+          border-radius: 14px;
+          padding: 12px;
+          font-weight: 800;
+          color: #3e2723;
+          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.1);
+          cursor: pointer;
+          font-size: 1rem;
+          justify-content: flex-start;
+        }
+
+        .nav-item:active {
+          transform: translateY(2px);
+          box-shadow: 0px 2px 0px rgba(0, 0, 0, 0.15);
+        }
+
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+          }
+          to {
+            transform: translateX(0);
+          }
+        }
+
+        @media (max-width: 480px) {
+          .grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+
+          .nav-panel {
+            width: 90%;
+          }
+        }
       `}</style>
     </>
   );
@@ -1194,7 +2133,11 @@ function Home() {
 
 export default function Page() {
   return (
-    <Suspense fallback={<div style={{ padding: 20, textAlign: "center" }}>Caricamento…</div>}>
+    <Suspense
+      fallback={
+        <div style={{ padding: 20, textAlign: "center" }}>Caricamento…</div>
+      }
+    >
       <Home />
     </Suspense>
   );

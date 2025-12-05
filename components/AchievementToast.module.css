@@ -1,0 +1,152 @@
+.toast {
+  position: fixed;
+  inset: auto 0 16px 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 3200;
+}
+
+.card {
+  width: min(95%, 420px);
+  background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+  border: 3px solid var(--brown);
+  border-radius: 18px;
+  padding: 12px 14px;
+  box-shadow: 0px 10px 0px rgba(78, 52, 46, 0.25), 0 12px 30px rgba(255, 183, 77, 0.45);
+  animation: slideUp 0.35s ease, glow 2s ease-in-out infinite alternate;
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.title {
+  font-family: "Titan One";
+  color: var(--brown);
+  font-size: 1.2rem;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.title::after {
+  content: "✨";
+  font-size: 1rem;
+  animation: pop 1.2s infinite;
+}
+
+.close {
+  background: #fff;
+  border: 2px solid var(--brown);
+  border-radius: 10px;
+  color: var(--brown);
+  font-weight: 800;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0px 3px 0px rgba(78, 52, 46, 0.2);
+}
+
+.close:active {
+  transform: translateY(2px);
+  box-shadow: 0px 1px 0px rgba(78, 52, 46, 0.2);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  background: #fff;
+  border: 2px solid var(--brown);
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: 0px 3px 0px rgba(78, 52, 46, 0.15);
+}
+
+.icon {
+  font-size: 1.9rem;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.15));
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.name {
+  font-weight: 800;
+  color: var(--brown);
+  line-height: 1.1;
+}
+
+.tag {
+  background: #fff0c2;
+  border: 1px solid var(--brown);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-weight: 700;
+  font-size: 0.75rem;
+  color: var(--brown);
+}
+
+.desc {
+  font-size: 0.85rem;
+  color: #5d4037;
+  line-height: 1.25;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes glow {
+  from {
+    box-shadow: 0px 8px 0px rgba(78, 52, 46, 0.25), 0 0 0 rgba(255, 183, 77, 0.4);
+  }
+  to {
+    box-shadow: 0px 10px 0px rgba(78, 52, 46, 0.25), 0 0 20px rgba(255, 183, 77, 0.75);
+  }
+}
+
+@keyframes pop {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}

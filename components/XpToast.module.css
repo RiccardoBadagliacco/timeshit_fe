@@ -1,0 +1,80 @@
+.toast {
+  position: fixed;
+  inset: 10px 0 auto 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 3400;
+}
+
+.card {
+  min-width: 240px;
+  max-width: 360px;
+  background: linear-gradient(120deg, #1de9b6, #00bfa5);
+  color: #0d2b2a;
+  border-radius: 16px;
+  border: 3px solid #0d2b2a;
+  padding: 10px 14px;
+  box-shadow: 0px 10px 0px rgba(13, 43, 42, 0.3), 0 14px 30px rgba(0, 191, 165, 0.5);
+  animation: slideDown 0.3s ease, floaty 2s ease-in-out infinite alternate;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: "Titan One";
+}
+
+.badge {
+  background: #004d40;
+  color: #1de9b6;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 2px solid #0d2b2a;
+  font-size: 0.95rem;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.2);
+}
+
+.level {
+  font-size: 0.95rem;
+  color: #004d40;
+}
+
+.track {
+  margin-top: 10px;
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  border: 2px solid #0d2b2a;
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a7ffeb, #00bfa5);
+  border-radius: 999px;
+  transition: width 0.6s ease;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes floaty {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(6px);
+  }
+}

@@ -1,5 +1,6 @@
 import "@/styles/globals.css";
 import { Metadata, Viewport } from "next";
+
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
@@ -25,15 +26,19 @@ export default function RootLayout({
   return (
     <html suppressHydrationWarning lang="it">
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com" rel="preconnect" />
+        <link
+          crossOrigin="anonymous"
+          href="https://fonts.gstatic.com"
+          rel="preconnect"
+        />
         <link
           href="https://fonts.googleapis.com/css2?family=Titan+One&family=Nunito:wght@700;900&display=swap"
           rel="stylesheet"
         />
       </head>
       <body
-        className="min-h-screen antialiased bg-[#fff8e1]"
+        className="antialiased"
         style={{ overflowX: "hidden" }}
       >
         <Providers themeProps={{ attribute: "class", defaultTheme: "light" }}>
