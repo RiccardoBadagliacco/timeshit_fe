@@ -1,9 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, ChevronLeft, ChevronRight, Trophy } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import LoaderOverlay from "@/components/LoaderOverlay";
 
@@ -112,6 +111,7 @@ function buildApiUrl(path: string, base?: string | null) {
 function formatUserName(u: BucketUser) {
   if (u.username) return `@${u.username}`;
   if (u.name) return u.name;
+
   return `User ${u.user_id}`;
 }
 
@@ -126,19 +126,24 @@ function userMassTons(u: BucketUser) {
 
 function seedNumberFromString(str: string) {
   let h = 1779033703 ^ str.length;
+
   for (let i = 0; i < str.length; i += 1) {
     h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
     h = (h << 13) | (h >>> 19);
   }
-  return (h >>> 0) || 1;
+
+  return h >>> 0 || 1;
 }
 
 function mulberry32(seed: number) {
   let t = seed;
+
   return () => {
     t += 0x6d2b79f5;
     let r = Math.imul(t ^ (t >>> 15), t | 1);
+
     r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+
     return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
   };
 }
@@ -174,8 +179,10 @@ function PageContent() {
           { cache: "no-store" },
         );
         const text = await res.text();
+
         if (!res.ok) throw new Error(`HTTP ${res.status} ${text}`);
         const data = JSON.parse(text) as BucketResponse;
+
         setBucket(data);
       } catch (err) {
         console.warn("Bucket load failed", err);
@@ -190,8 +197,10 @@ function PageContent() {
 
   const leaderboard = useMemo(() => {
     if (!bucket) return [];
+
     return [...bucket.users].sort(
-      (a, b) => userMassTons(b) - userMassTons(a) || b.total_poops - a.total_poops,
+      (a, b) =>
+        userMassTons(b) - userMassTons(a) || b.total_poops - a.total_poops,
     );
   }, [bucket]);
 
@@ -203,6 +212,7 @@ function PageContent() {
     if (bucket && typeof bucket.total_mass_tons === "number") {
       return bucket.total_mass_tons;
     }
+
     return leaderboard.reduce(
       (sum, u) => sum + (u.mass_tons ?? massTonsFromPoops(u.total_poops)),
       0,
@@ -210,15 +220,17 @@ function PageContent() {
   }, [bucket, leaderboard]);
 
   const percentToTarget = useMemo(
-    () => ((globalWeightTons / TARGET_TONS) * 100 || 0),
+    () => (globalWeightTons / TARGET_TONS) * 100 || 0,
     [globalWeightTons],
   );
 
   const fillPct = useMemo(() => {
     if (globalWeightTons <= 0) return 0;
     const pct = percentToTarget;
+
     if (pct > 100) return 100;
     if (pct < 0) return 0;
+
     return pct;
   }, [globalWeightTons, percentToTarget]);
 
@@ -227,6 +239,7 @@ function PageContent() {
     const count = Math.min(8, Math.max(2, Math.floor(fillPct / 10)));
     const seedStr = `${year}-${fillPct.toFixed(2)}-${leaderboard.length}`;
     const rand = mulberry32(seedNumberFromString(seedStr));
+
     return Array.from({ length: count }).map((_, idx) => ({
       key: `d-${idx}-${fillPct.toFixed(1)}`,
       icon: emojis[idx % emojis.length],
@@ -242,22 +255,12 @@ function PageContent() {
       <div aria-hidden className="bg-layer" />
       <main className="bucket-page">
         <div className="container">
-          <nav className="navbar">
-            <Link className="nav-btn" href="/">
-              <ArrowLeft size={18} />
-            </Link>
-            <div className="nav-title">PoopBucket</div>
-            <div className="nav-btn">
-              <Trophy size={16} />
-            </div>
-          </nav>
-
           <div className="year-switch">
             <button
               aria-label="Anno precedente"
               disabled={year <= MIN_YEAR}
-              onClick={() => setYear((y) => Math.max(MIN_YEAR, y - 1))}
               type="button"
+              onClick={() => setYear((y) => Math.max(MIN_YEAR, y - 1))}
             >
               <ChevronLeft size={16} />
             </button>
@@ -265,8 +268,8 @@ function PageContent() {
             <button
               aria-label="Anno successivo"
               disabled={year >= CURRENT_YEAR}
-              onClick={() => setYear((y) => Math.min(CURRENT_YEAR, y + 1))}
               type="button"
+              onClick={() => setYear((y) => Math.min(CURRENT_YEAR, y + 1))}
             >
               <ChevronRight size={16} />
             </button>
@@ -284,28 +287,29 @@ function PageContent() {
               </div>
             </div>
 
-              <div className="titan-tank">
-                <div className="tank-glare" />
+            <div className="titan-tank">
+              <div className="tank-glare" />
 
-                <div className="milestones">
-                  {[...MILESTONES].reverse().map(({ pct, label, icon }) => {
-                    const active = percentToTarget >= pct;
-                    return (
-                      <div
-                        key={label}
-                        className={`ms ${active ? "active" : ""}`}
-                        data-t={pct}
-                      >
-                        <span className="ms-icon">
-                          <span className="ms-emoji" aria-hidden>
-                            {icon}
-                          </span>
-                          {label}
+              <div className="milestones">
+                {[...MILESTONES].reverse().map(({ pct, label, icon }) => {
+                  const active = percentToTarget >= pct;
+
+                  return (
+                    <div
+                      key={label}
+                      className={`ms ${active ? "active" : ""}`}
+                      data-t={pct}
+                    >
+                      <span className="ms-icon">
+                        <span aria-hidden className="ms-emoji">
+                          {icon}
                         </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
 
               <div
                 className="liquid"
@@ -332,15 +336,15 @@ function PageContent() {
             </div>
           </div>
 
-              <div className="stats-row">
-                <div className="mini-stat">
-                  <div className="mini-val">{globalPoops.toLocaleString()}</div>
-                  <div className="mini-lbl">Log Totali</div>
-                </div>
-                <div className="mini-stat">
-                  <div className="mini-val">{formatKg(globalWeightTons)} kg</div>
-                  <div className="mini-lbl">Massa Stimata</div>
-                </div>
+          <div className="stats-row">
+            <div className="mini-stat">
+              <div className="mini-val">{globalPoops.toLocaleString()}</div>
+              <div className="mini-lbl">Log Totali</div>
+            </div>
+            <div className="mini-stat">
+              <div className="mini-val">{formatKg(globalWeightTons)} kg</div>
+              <div className="mini-lbl">Massa Stimata</div>
+            </div>
             <div className="mini-stat">
               <div className="mini-val">{leaderboard.length}</div>
               <div className="mini-lbl">Partecipanti</div>
@@ -353,7 +357,8 @@ function PageContent() {
             ) : leaderboard.length ? (
               <>
                 <div className="lb-title">
-                  Classifica <span className="badge-count">{leaderboard.length}</span>
+                  Classifica{" "}
+                  <span className="badge-count">{leaderboard.length}</span>
                 </div>
 
                 <div className="podium">
@@ -371,14 +376,12 @@ function PageContent() {
                         globalWeightTons > 0
                           ? ((mass / globalWeightTons) * 100).toFixed(1)
                           : "0.0";
+
                       return (
-                        <div className={`p-col rk-${rank}`} key={u.user_id}>
+                        <div key={u.user_id} className={`p-col rk-${rank}`}>
                           <div className="p-avatar">
                             {u.photo_url ? (
-                              <img
-                                alt={formatUserName(u)}
-                                src={u.photo_url}
-                              />
+                              <img alt={formatUserName(u)} src={u.photo_url} />
                             ) : (
                               "💩"
                             )}
@@ -410,14 +413,16 @@ function PageContent() {
                         : "0.0";
                     const leaderMass = userMassTons(leaderboard[0] || u);
                     const barPct =
-                      leaderMass > 0 ? Math.min(100, (mass / leaderMass) * 100) : 0;
+                      leaderMass > 0
+                        ? Math.min(100, (mass / leaderMass) * 100)
+                        : 0;
                     const avatar =
                       u.username?.[0] ||
                       u.name?.[0] ||
                       (u.photo_url ? "🖼️" : "💩");
 
                     return (
-                      <div className="row-card" key={u.user_id}>
+                      <div key={u.user_id} className="row-card">
                         <div className="rk-num">#{rank}</div>
                         <div className="row-av">{avatar}</div>
                         <div className="row-info">
@@ -447,7 +452,9 @@ function PageContent() {
                 </div>
               </>
             ) : (
-              <div className="empty">Nessun dato per l&apos;anno selezionato</div>
+              <div className="empty">
+                Nessun dato per l&apos;anno selezionato
+              </div>
             )}
           </div>
         </div>
@@ -503,38 +510,6 @@ function PageContent() {
           display: flex;
           flex-direction: column;
           gap: 12px;
-        }
-
-        .navbar {
-          position: sticky;
-          top: 0;
-          z-index: 10;
-          background: rgba(255, 251, 240, 0.95);
-          backdrop-filter: blur(10px);
-          padding: 12px 0;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          border-bottom: 2px solid rgba(62, 39, 35, 0.1);
-        }
-
-        .nav-btn {
-          background: #fff;
-          border: 2px solid var(--accent);
-          border-radius: 8px;
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          box-shadow: 2px 2px 0 var(--accent);
-          color: var(--accent);
-        }
-
-        .nav-title {
-          font-family: "Titan One", cursive;
-          font-size: 1.1rem;
-          color: #5d4037;
-          text-transform: uppercase;
         }
 
         .year-switch {

@@ -25,7 +25,89 @@ body {
 }
 
 body {
-  padding: 20px 15px 120px 15px;
+  min-height: 100%;
   font-family: "Nunito", sans-serif;
   overflow-x: hidden;
+  margin: 0;
+  background: var(--bg);
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 15px;
+}
+
+.page-content {
+  padding: 20px 0 120px;
+  flex: 1;
+  animation: fade-in 0.35s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-loading {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+      120deg,
+      rgba(255, 255, 255, 0.9),
+      rgba(255, 255, 255, 0.6)
+    ),
+    rgba(255, 255, 255, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  backdrop-filter: blur(4px);
+  animation: shimmer 1.4s ease infinite;
+  z-index: 10;
+}
+
+.page-loading__pulse {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 5px solid rgba(255, 255, 255, 0.5);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: spin 1s linear infinite;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.page-loading__text {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #3e2723;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }

@@ -3,6 +3,10 @@ import { Metadata, Viewport } from "next";
 
 import { Providers } from "./providers";
 
+import { AppHeader } from "@/components/AppHeader";
+import { HeaderProvider } from "@/components/HeaderContext";
+import { PageShell } from "@/components/PageShell";
+
 export const metadata: Metadata = {
   title: "PoopLog Arcade ULTRA",
   description: "WebApp Telegram per tracciare le tue flushate eroiche.",
@@ -37,12 +41,14 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body
-        className="antialiased"
-        style={{ overflowX: "hidden" }}
-      >
+      <body className="antialiased" style={{ overflowX: "hidden" }}>
         <Providers themeProps={{ attribute: "class", defaultTheme: "light" }}>
-          {children}
+          <HeaderProvider>
+            <div className="app-shell">
+              <AppHeader />
+              <PageShell>{children}</PageShell>
+            </div>
+          </HeaderProvider>
         </Providers>
       </body>
     </html>

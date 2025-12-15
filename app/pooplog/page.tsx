@@ -1,9 +1,8 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, ChevronLeft, ChevronRight, PenSquare, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 
 import LoaderOverlay from "@/components/LoaderOverlay";
 
@@ -173,6 +172,7 @@ function PageContent() {
       if (!uid && !username) {
         setError("Nessun username/uid fornito");
         setLoading(false);
+
         return;
       }
 
@@ -183,6 +183,7 @@ function PageContent() {
         const userUrl = buildApiUrl(`/webapp/userinfo?${qs}`, apiBaseParam);
         const res = await fetch(userUrl, { cache: "no-store" });
         const body = await res.text();
+
         if (!res.ok) throw new Error(`HTTP ${res.status} ${body}`);
         const data = JSON.parse(body) as UserInfoResponse;
 
@@ -223,6 +224,7 @@ function PageContent() {
       );
       const res = await fetch(url, { cache: "no-store" });
       const body = await res.text();
+
       if (!res.ok) throw new Error(`HTTP ${res.status} ${body}`);
       const data = JSON.parse(body) as MonthlyPoopsResponse;
 
@@ -241,10 +243,12 @@ function PageContent() {
 
   const logsByDay = useMemo(() => {
     const map = new Map<string, PoopEntry[]>();
+
     logs.forEach((log) => {
       const dt = parseDate(log.created_at);
       const key = dateKey(dt);
       const existing = map.get(key) || [];
+
       existing.push(log);
       map.set(key, existing);
     });
@@ -284,10 +288,7 @@ function PageContent() {
         : count;
     }, 0);
   }, [logs, viewDate]);
-  const monthStats = useMemo(
-    () => `Loot Totale: ${monthLoot}`,
-    [monthLoot],
-  );
+  const monthStats = useMemo(() => `Loot Totale: ${monthLoot}`, [monthLoot]);
   const selectedLabel = useMemo(
     () =>
       selectedDate.toLocaleDateString("it-IT", {
@@ -323,6 +324,7 @@ function PageContent() {
 
       setSelectedDate((current) => {
         const today = new Date();
+
         if (
           today.getFullYear() === next.getFullYear() &&
           today.getMonth() === next.getMonth()
@@ -357,6 +359,7 @@ function PageContent() {
       const url = buildApiUrl(`/poop/${confirmTarget.id}`, apiBase);
       const res = await fetch(url, { method: "DELETE", cache: "no-store" });
       const body = await res.text();
+
       if (!res.ok) throw new Error(`HTTP ${res.status} ${body}`);
       JSON.parse(body) as DeletePoopResponse;
       await fetchMonthPoops();
@@ -374,21 +377,6 @@ function PageContent() {
       <div aria-hidden className="bg-layer-pooplog" />
       <main className="pooplog-page">
         <div className="container">
-          <nav className="navbar">
-            <Link className="nav-btn" href="/">
-              <ArrowLeft size={18} />
-            </Link>
-            <div className="nav-title">Diario</div>
-            <button
-              aria-label="Modifica in arrivo"
-              className="nav-btn"
-              disabled
-              type="button"
-            >
-              <PenSquare size={16} />
-            </button>
-          </nav>
-
           {error ? <div className="error">{error}</div> : null}
 
           <section className="calendar-card" id="calendarCard">
@@ -396,8 +384,8 @@ function PageContent() {
               <button
                 aria-label="Mese precedente"
                 className="cal-nav-btn"
-                onClick={() => shiftMonth(-1)}
                 type="button"
+                onClick={() => shiftMonth(-1)}
               >
                 <ChevronLeft size={18} />
               </button>
@@ -408,8 +396,8 @@ function PageContent() {
               <button
                 aria-label="Mese successivo"
                 className="cal-nav-btn"
-                onClick={() => shiftMonth(1)}
                 type="button"
+                onClick={() => shiftMonth(1)}
               >
                 <ChevronRight size={18} />
               </button>
@@ -417,7 +405,7 @@ function PageContent() {
 
             <div className="weekdays-grid">
               {DAYS_SHORT.map((day) => (
-                <div className="weekday" key={day}>
+                <div key={day} className="weekday">
                   {day}
                 </div>
               ))}
@@ -426,7 +414,12 @@ function PageContent() {
             <div className="days-grid">
               {calendarCells.map((date, idx) => {
                 if (!date) {
-                  return <div className="day-cell placeholder" key={`empty-${idx}`} />;
+                  return (
+                    <div
+                      key={`empty-${idx}`}
+                      className="day-cell placeholder"
+                    />
+                  );
                 }
 
                 const dayLogs = logsByDay.get(dateKey(date)) || [];
@@ -479,32 +472,34 @@ function PageContent() {
                 );
 
                 return (
-                  <div className="log-card" key={log.id}>
+                  <div key={log.id} className="log-card">
                     <div className="log-emoji">{size?.emoji || "💩"}</div>
                     <div className="log-info">
                       <div className="log-badges">
                         <span className="badge cons">
                           {cons?.label || log.consistency}
                         </span>
-                        <span className="badge loc">{loc?.label || log.location}</span>
+                        <span className="badge loc">
+                          {loc?.label || log.location}
+                        </span>
                       </div>
                       <div className="log-details">
                         {xp} XP • {timeStr}
                       </div>
+                    </div>
+                    <button
+                      aria-label="Elimina log"
+                      className="btn-trash"
+                      disabled={deleting}
+                      type="button"
+                      onClick={() => startDelete(log)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
-                  <button
-                    aria-label="Elimina log"
-                    className="btn-trash"
-                    disabled={deleting}
-                    onClick={() => startDelete(log)}
-                    type="button"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              );
-            })
-          ) : (
+                );
+              })
+            ) : (
               <div className="empty-state">💩 Nessun drop oggi.</div>
             )}
           </div>
@@ -512,7 +507,7 @@ function PageContent() {
       </main>
 
       {confirmTarget ? (
-        <div className="confirm-overlay" role="dialog" aria-modal="true">
+        <div aria-modal="true" className="confirm-overlay" role="dialog">
           <div className="confirm-card">
             <div className="confirm-icon">🚽</div>
             <div className="confirm-title">Eliminare questo log?</div>
@@ -524,16 +519,16 @@ function PageContent() {
               <button
                 className="btn-ghost"
                 disabled={deleting}
-                onClick={cancelDelete}
                 type="button"
+                onClick={cancelDelete}
               >
                 Annulla
               </button>
               <button
                 className="btn-danger"
                 disabled={deleting}
-                onClick={performDelete}
                 type="button"
+                onClick={performDelete}
               >
                 Elimina
               </button>
@@ -585,50 +580,6 @@ function PageContent() {
           opacity: 0.5;
           z-index: 0;
           pointer-events: none;
-        }
-
-        .navbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          background: rgba(255, 251, 240, 0.95);
-          backdrop-filter: blur(5px);
-          padding: 10px 0;
-          margin-bottom: 15px;
-          position: sticky;
-          top: 0;
-          z-index: 50;
-        }
-
-        .nav-title {
-          font-family: "Titan One", cursive;
-          font-size: 1.4rem;
-          color: #3e2723;
-        }
-
-        .nav-btn {
-          width: 40px;
-          height: 40px;
-          border: 2px solid #3e2723;
-          border-radius: 12px;
-          background: #fff;
-          display: grid;
-          place-items: center;
-          box-shadow: 2px 2px 0 #3e2723;
-          color: #3e2723;
-          cursor: pointer;
-          transition: 0.1s;
-        }
-
-        .nav-btn:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-          box-shadow: none;
-        }
-
-        .nav-btn:active:not(:disabled) {
-          transform: translate(2px, 2px);
-          box-shadow: none;
         }
 
         .calendar-card {
@@ -704,7 +655,9 @@ function PageContent() {
           display: grid;
           grid-template-columns: repeat(7, 1fr);
           gap: 6px;
-          transition: transform 0.2s ease-out, opacity 0.2s;
+          transition:
+            transform 0.2s ease-out,
+            opacity 0.2s;
         }
 
         .day-cell {
@@ -1005,10 +958,6 @@ function PageContent() {
 
           .day-cell {
             font-size: 0.85rem;
-          }
-
-          .navbar {
-            padding: 10px 0;
           }
 
           .pooplog-page {

@@ -8,9 +8,8 @@ import {
   useRef,
   useState,
 } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CalendarDays, Crown, Home as HomeIcon, Menu, Trophy } from "lucide-react";
+import { useHeaderState } from "@/components/HeaderContext";
 
 import AchievementToast from "@/components/AchievementToast";
 import LoaderOverlay from "@/components/LoaderOverlay";
@@ -329,14 +328,11 @@ function Home() {
   const [isReady, setIsReady] = useState(false);
   const [achievements, setAchievements] = useState<AchievementCard[]>([]);
   const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [currentSection, setCurrentSection] = useState<
-    "wc" | "pooplog" | "classifiche" | "poopbucket" | "achievements"
-  >("wc");
   const [saving, setSaving] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [recentAch, setRecentAch] = useState<AchievementCard[]>([]);
   const [xpToast, setXpToast] = useState<XpToastPayload | null>(null);
+  const { updateHeader } = useHeaderState();
 
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -357,6 +353,18 @@ function Home() {
 
     return Math.max(0, Math.min(100, perc));
   }, [progress]);
+
+  useEffect(() => {
+    updateHeader({ progress });
+  }, [progress, updateHeader]);
+
+  useEffect(() => {
+    updateHeader({ playerName });
+  }, [playerName, updateHeader]);
+
+  useEffect(() => {
+    updateHeader({ photoUrl });
+  }, [photoUrl, updateHeader]);
 
   const resetSelections = () => {
     setSelection({ type: "", size: "", loc: "" });
@@ -921,7 +929,6 @@ function Home() {
       : selection.loc;
 
   const closeAchToast = () => setRecentAch([]);
-  const closeMenu = () => setMenuOpen(false);
 
   return (
     <>
@@ -929,38 +936,6 @@ function Home() {
       <canvas ref={canvasRef} id="confettiCanvas" />
 
       <XpToast xp={xpToast} />
-
-      <header>
-        <div className="status-panel">
-          <div className={`avatar ${photoUrl ? "with-photo" : ""}`}>
-            {photoUrl ? <img alt="" src={photoUrl} /> : "💩"}
-          </div>
-          <div className="stats">
-            <div className="name" id="playerName">
-              {playerName}
-            </div>
-            <div className="xp-row">
-              <div className="xp-container">
-                <div
-                  className="xp-fill"
-                  id="xpFill"
-                  style={{ width: `${xpPerc}%` }}
-                />
-              </div>
-              <div className="level-badge" id="levelBox">
-                LVL {progress?.level ?? "?"}
-              </div>
-            </div>
-          </div>
-        </div>
-        <button
-          aria-label="Menu"
-          className="menu-btn"
-          onClick={() => setMenuOpen(true)}
-        >
-          <Menu size={26} />
-        </button>
-      </header>
 
       {error ? (
         <p style={{ color: "#b71c1c", fontWeight: 800 }}>{error}</p>
@@ -1055,74 +1030,6 @@ function Home() {
       )}
 
       <AchievementToast items={recentAch} onClose={closeAchToast} />
-
-      {menuOpen ? (
-        <div aria-hidden={!menuOpen} className="nav-overlay">
-          <div className="nav-panel">
-            <div className="nav-header">
-              <div className="nav-logo">💩</div>
-              <button
-                aria-label="Chiudi menu"
-                className="nav-close"
-                onClick={closeMenu}
-              >
-                ✕
-              </button>
-            </div>
-            <div className="nav-items">
-              <Link
-                className={`nav-item ${currentSection === "wc" ? "active" : ""}`}
-                href="/"
-                onClick={() => {
-                  setCurrentSection("wc");
-                  closeMenu();
-                }}
-              >
-                <HomeIcon size={18} /> WC
-              </Link>
-              <Link
-                className={`nav-item ${currentSection === "pooplog" ? "active" : ""}`}
-                href="/pooplog"
-                onClick={() => {
-                  setCurrentSection("pooplog");
-                  closeMenu();
-                }}
-              >
-                <CalendarDays size={18} /> PoopLog
-              </Link>
-              <button
-                className={`nav-item ${currentSection === "classifiche" ? "active" : ""}`}
-                onClick={() => {
-                  setCurrentSection("classifiche");
-                  closeMenu();
-                }}
-              >
-                <Crown size={18} /> Classifiche
-              </button>
-              <Link
-                className={`nav-item ${currentSection === "poopbucket" ? "active" : ""}`}
-                href="/poopbucket"
-                onClick={() => {
-                  setCurrentSection("poopbucket");
-                  closeMenu();
-                }}
-              >
-                <Trophy size={18} /> Poopbucket
-              </Link>
-              <Link
-                className={`nav-item ${currentSection === "achievements" ? "active" : ""}`}
-                href="/achivments"
-                onClick={() => {
-                  setCurrentSection("achievements");
-                  closeMenu();
-                }}
-              >
-                <Trophy size={18} /> Achievements
-              </Link>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       <LoaderOverlay
         emoji="🧻"
@@ -1578,107 +1485,6 @@ function Home() {
           }
         }
 
-        .nav-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.65);
-          backdrop-filter: blur(3px);
-          display: flex;
-          justify-content: flex-end;
-          z-index: 2000;
-        }
-
-        .nav-panel {
-          width: 78%;
-          max-width: 340px;
-          background: #fff8e1;
-          border-left: 4px solid var(--brown);
-          box-shadow: -6px 0 20px rgba(0, 0, 0, 0.25);
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          animation: slideIn 0.25s ease;
-        }
-
-        .nav-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-
-        .nav-logo {
-          width: 46px;
-          height: 46px;
-          border-radius: 12px;
-          border: 3px solid var(--brown);
-          background: radial-gradient(circle at 30% 30%, #fffdf5, #ffc178);
-          display: grid;
-          place-items: center;
-          font-size: 1.6rem;
-          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.15);
-        }
-
-        .nav-close {
-          background: #fff;
-          border: 2px solid var(--brown);
-          border-radius: 12px;
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          font-weight: 800;
-          cursor: pointer;
-          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.2);
-        }
-
-        .nav-close:active {
-          transform: translateY(2px);
-          box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.2);
-        }
-
-        .nav-items {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-
-        .nav-item {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          border: 2px solid var(--brown);
-          background: linear-gradient(120deg, #fff9c4, #ffe0b2);
-          border-radius: 14px;
-          padding: 12px;
-          font-weight: 800;
-          color: #3e2723;
-          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.1);
-          cursor: pointer;
-          font-size: 1rem;
-          justify-content: flex-start;
-        }
-
-        .nav-item:active {
-          transform: translateY(2px);
-          box-shadow: 0px 2px 0px rgba(0, 0, 0, 0.15);
-        }
-
-        .nav-item.active {
-          border-color: #3e2723;
-          background: linear-gradient(120deg, #ffb74d, #ff9800);
-          box-shadow: 0px 4px 0px rgba(62, 39, 35, 0.2);
-        }
-
-        @keyframes slideIn {
-          from {
-            transform: translateX(100%);
-          }
-          to {
-            transform: translateX(0);
-          }
-        }
-
         .bg-layer-home {
           position: fixed;
           inset: 0;
@@ -1705,108 +1511,9 @@ function Home() {
           z-index: 999;
         }
 
-        .nav-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.65);
-          backdrop-filter: blur(3px);
-          display: flex;
-          justify-content: flex-end;
-          z-index: 2000;
-        }
-
-        .nav-panel {
-          width: 78%;
-          max-width: 340px;
-          background: #fff8e1;
-          border-left: 4px solid var(--brown);
-          box-shadow: -6px 0 20px rgba(0, 0, 0, 0.25);
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          animation: slideIn 0.25s ease;
-        }
-
-        .nav-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-
-        .nav-logo {
-          width: 46px;
-          height: 46px;
-          border-radius: 12px;
-          border: 3px solid var(--brown);
-          background: radial-gradient(circle at 30% 30%, #fffdf5, #ffc178);
-          display: grid;
-          place-items: center;
-          font-size: 1.6rem;
-          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.15);
-        }
-
-        .nav-close {
-          background: #fff;
-          border: 2px solid var(--brown);
-          border-radius: 12px;
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          font-weight: 800;
-          cursor: pointer;
-          box-shadow: 0px 3px 0px rgba(0, 0, 0, 0.2);
-        }
-
-        .nav-close:active {
-          transform: translateY(2px);
-          box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.2);
-        }
-
-        .nav-items {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-
-        .nav-item {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          border: 2px solid var(--brown);
-          background: linear-gradient(120deg, #fff9c4, #ffe0b2);
-          border-radius: 14px;
-          padding: 12px;
-          font-weight: 800;
-          color: #3e2723;
-          box-shadow: 0px 4px 0px rgba(0, 0, 0, 0.1);
-          cursor: pointer;
-          font-size: 1rem;
-          justify-content: flex-start;
-        }
-
-        .nav-item:active {
-          transform: translateY(2px);
-          box-shadow: 0px 2px 0px rgba(0, 0, 0, 0.15);
-        }
-
-        @keyframes slideIn {
-          from {
-            transform: translateX(100%);
-          }
-          to {
-            transform: translateX(0);
-          }
-        }
-
         @media (max-width: 480px) {
           .grid {
             grid-template-columns: repeat(2, 1fr);
-          }
-
-          .nav-panel {
-            width: 90%;
           }
         }
       `}</style>
