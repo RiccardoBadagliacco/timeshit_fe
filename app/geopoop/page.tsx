@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import L from "leaflet";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FeatureGroup, Map, PopupEvent } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 import { useHeaderState } from "@/components/HeaderContext";
@@ -31,7 +31,10 @@ type Cluster = {
   poops: PoopWithUser[];
 };
 
-const CONFIG = {
+const CONFIG: {
+  consistency: Record<string, { label: string; emoji: string }>;
+  size: Record<string, { label: string; emoji: string }>;
+} = {
   consistency: {
     normal: { label: "Normale", emoji: "🙂" },
     liquid: { label: "Liquida", emoji: "🌊" },
@@ -53,8 +56,20 @@ export default function GeoPoopPage() {
   const { state } = useHeaderState();
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const mapContainer = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const groupRef = useRef<L.FeatureGroup | null>(null);
+  const mapRef = useRef<Map | null>(null);
+  const groupRef = useRef<FeatureGroup | null>(null);
+  const leafletRef = useRef<typeof import("leaflet") | null>(null);
+  const leafletLoaderRef = useRef<Promise<typeof import("leaflet")> | null>(null);
+
+  const loadLeaflet = useCallback(() => {
+    if (!leafletLoaderRef.current) {
+      leafletLoaderRef.current = import("leaflet").then((mod) => {
+        leafletRef.current = mod;
+        return mod;
+      });
+    }
+    return leafletLoaderRef.current;
+  }, []);
 
   const totalLogs = useMemo(
     () => clusters.reduce((acc, cluster) => acc + cluster.poops.length, 0),
@@ -103,102 +118,109 @@ export default function GeoPoopPage() {
   useEffect(() => {
     if (typeof window === "undefined" || !mapContainer.current) return;
 
-    if (!mapRef.current) {
-      mapRef.current = L.map(mapContainer.current, {
-        zoomControl: false,
-      }).setView([42.5, 12.5], 6);
+    const container = mapContainer.current;
+    if (!container) return;
 
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", {
-        attribution: "&copy; OpenStreetMap &copy; CARTO",
-        maxZoom: 20,
-      }).addTo(mapRef.current);
+    let isCancelled = false;
+    let handlePopup: ((event: PopupEvent) => void) | null = null;
 
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png", {
-        subdomains: "abcd",
-        maxZoom: 20,
-        opacity: 0.7,
-      }).addTo(mapRef.current);
-    }
+    loadLeaflet().then((L) => {
+      if (isCancelled) return;
 
-    if (!groupRef.current) {
-      groupRef.current = L.featureGroup().addTo(mapRef.current);
-    }
+      if (!mapRef.current) {
+        mapRef.current = L.map(container, {
+          zoomControl: false,
+        }).setView([42.5, 12.5], 6);
 
-    const group = groupRef.current;
+        L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", {
+          attribution: "&copy; OpenStreetMap &copy; CARTO",
+          maxZoom: 20,
+        }).addTo(mapRef.current);
 
-    group.clearLayers();
-
-    clusters.forEach((cluster, index) => {
-      const entries = cluster.poops;
-      const primary = entries[0];
-      const poopEmoji = "💩";
-      const iconHtml =
-        entries.length === 1
-        ? `<div class="custom-marker">${poopEmoji}</div>`
-        : `<div class="custom-counter"><span class="counter-num">${entries.length}</span></div>`;
-
-      const icon = L.divIcon({
-        className: "custom-div-icon",
-        html: iconHtml,
-        iconSize: [46, 46],
-        iconAnchor: [23, 46],
-        popupAnchor: [0, -48],
-      });
-
-      const payload = encodeURIComponent(JSON.stringify(entries));
-
-      const locationLabel = primary.poop.location || "Posizione sconosciuta";
-      const popup = `
-        <div class="popup-card">
-          <div class="popup-header">
-            <span class="header-emoji">${poopEmoji}</span>
-            ${locationLabel}
-          </div>
-          <div class="popup-body">
-            <div class="popup-user">Utente: ${primary.username || "Anonimo"}</div>
-            <span class="popup-emoji">${poopEmoji}</span>
-            <div class="popup-details">
-              ${CONFIG.consistency[primary.poop.consistency]?.label || primary.poop.consistency} •
-              ${CONFIG.size[primary.poop.size]?.label || primary.poop.size}
-            </div>
-            <div class="popup-slider" data-poops="${payload}" data-count="${entries.length}">
-              <button class="popup-nav" data-direction="prev" aria-label="Prev">‹</button>
-              <div class="popup-slide"></div>
-              <button class="popup-nav" data-direction="next" aria-label="Next">›</button>
-            </div>
-            <div class="popup-date">${formatDate(primary.poop.created_at)}</div>
-          </div>
-        </div>
-      `;
-
-      const marker = L.marker([cluster.lat, cluster.lng], { icon }).bindPopup(popup);
-
-      marker.addTo(group);
-    });
-
-    if (group.getLayers().length) {
-      mapRef.current.fitBounds(group.getBounds(), { padding: [50, 50] });
-    }
-
-    const handlePopup = (event: L.LeafletPopupEvent) => {
-      const popupEl = event.popup.getElement();
-      if (!popupEl) return;
-      const slider = popupEl.querySelector<HTMLElement>(".popup-slider");
-      const slideArea = popupEl.querySelector<HTMLElement>(".popup-slide");
-      if (!slider || !slideArea) return;
-
-      let entries: PoopWithUser[] = [];
-      try {
-        entries = JSON.parse(decodeURIComponent(slider.dataset.poops || ""));
-      } catch (err) {
-        return;
+        L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png", {
+          subdomains: "abcd",
+          maxZoom: 20,
+          opacity: 0.7,
+        }).addTo(mapRef.current);
       }
 
-      if (!entries.length) return;
+      if (!groupRef.current) {
+        groupRef.current = L.featureGroup().addTo(mapRef.current);
+      }
 
-      slider.dataset.count = String(entries.length);
+      const group = groupRef.current;
+      group.clearLayers();
 
-      let currentIndex = 0;
+      clusters.forEach((cluster) => {
+        const entries = cluster.poops;
+        const primary = entries[0];
+        const poopEmoji = "💩";
+        const iconHtml =
+          entries.length === 1
+            ? `<div class="custom-marker">${poopEmoji}</div>`
+            : `<div class="custom-counter"><span class="counter-num">${entries.length}</span></div>`;
+
+        const icon = L.divIcon({
+          className: "custom-div-icon",
+          html: iconHtml,
+          iconSize: [46, 46],
+          iconAnchor: [23, 46],
+          popupAnchor: [0, -48],
+        });
+
+        const payload = encodeURIComponent(JSON.stringify(entries));
+
+        const locationLabel = primary.poop.location || "Posizione sconosciuta";
+        const popup = `
+          <div class="popup-card">
+            <div class="popup-header">
+              <span class="header-emoji">${poopEmoji}</span>
+              ${locationLabel}
+            </div>
+            <div class="popup-body">
+              <div class="popup-user">Utente: ${primary.username || "Anonimo"}</div>
+              <span class="popup-emoji">${poopEmoji}</span>
+              <div class="popup-details">
+                ${CONFIG.consistency[primary.poop.consistency]?.label || primary.poop.consistency} •
+                ${CONFIG.size[primary.poop.size]?.label || primary.poop.size}
+              </div>
+              <div class="popup-slider" data-poops="${payload}" data-count="${entries.length}">
+                <button class="popup-nav" data-direction="prev" aria-label="Prev">‹</button>
+                <div class="popup-slide"></div>
+                <button class="popup-nav" data-direction="next" aria-label="Next">›</button>
+              </div>
+              <div class="popup-date">${formatDate(primary.poop.created_at)}</div>
+            </div>
+          </div>
+        `;
+
+        const marker = L.marker([cluster.lat, cluster.lng], { icon }).bindPopup(popup);
+        marker.addTo(group);
+      });
+
+      if (group.getLayers().length) {
+        mapRef.current!.fitBounds(group.getBounds(), { padding: [50, 50] });
+      }
+
+      handlePopup = (event: PopupEvent) => {
+        const popupEl = event.popup.getElement();
+        if (!popupEl) return;
+        const slider = popupEl.querySelector<HTMLElement>(".popup-slider");
+        const slideArea = popupEl.querySelector<HTMLElement>(".popup-slide");
+        if (!slider || !slideArea) return;
+
+        let entries: PoopWithUser[] = [];
+        try {
+          entries = JSON.parse(decodeURIComponent(slider.dataset.poops || ""));
+        } catch (err) {
+          return;
+        }
+
+        if (!entries.length) return;
+
+        slider.dataset.count = String(entries.length);
+
+        let currentIndex = 0;
 
         const renderSlide = () => {
           const entry = entries[currentIndex];
@@ -211,39 +233,43 @@ export default function GeoPoopPage() {
           }
         };
 
-      renderSlide();
+        renderSlide();
 
-      const navButtons = Array.from(slider.querySelectorAll<HTMLButtonElement>(".popup-nav"));
-      const handlers: { btn: HTMLButtonElement; handler: () => void }[] = [];
+        const navButtons = Array.from(slider.querySelectorAll<HTMLButtonElement>(".popup-nav"));
+        const handlers: { btn: HTMLButtonElement; handler: () => void }[] = [];
 
-      navButtons.forEach((btn) => {
-        const handler = () => {
-          currentIndex =
-            btn.dataset.direction === "next"
-              ? (currentIndex + 1) % entries.length
-              : (currentIndex - 1 + entries.length) % entries.length;
-          renderSlide();
-        };
-        btn.addEventListener("click", handler);
-        btn.addEventListener("touchend", handler);
-        handlers.push({ btn, handler });
-      });
-
-      event.popup.once("remove", () => {
-        handlers.forEach(({ btn, handler }) => {
-          btn.removeEventListener("click", handler);
-          btn.removeEventListener("touchend", handler);
+        navButtons.forEach((btn) => {
+          const handler = () => {
+            currentIndex =
+              btn.dataset.direction === "next"
+                ? (currentIndex + 1) % entries.length
+                : (currentIndex - 1 + entries.length) % entries.length;
+            renderSlide();
+          };
+          btn.addEventListener("click", handler);
+          btn.addEventListener("touchend", handler);
+          handlers.push({ btn, handler });
         });
-      });
-    };
 
-    mapRef.current.on("popupopen", handlePopup);
+        event.popup.once("remove", () => {
+          handlers.forEach(({ btn, handler }) => {
+            btn.removeEventListener("click", handler);
+            btn.removeEventListener("touchend", handler);
+          });
+        });
+      };
+
+      mapRef.current?.on("popupopen", handlePopup);
+    });
 
     return () => {
-      group.clearLayers();
-      mapRef.current?.off("popupopen", handlePopup);
+      isCancelled = true;
+      if (handlePopup && mapRef.current) {
+        mapRef.current.off("popupopen", handlePopup);
+      }
+      groupRef.current?.clearLayers();
     };
-  }, [clusters]);
+  }, [clusters, loadLeaflet]);
 
   const centerOnMe = () => {
     if (!mapRef.current) return;
@@ -252,6 +278,13 @@ export default function GeoPoopPage() {
 
       return;
     }
+
+    if (!leafletRef.current) {
+      loadLeaflet().then(() => centerOnMe());
+      return;
+    }
+
+    const L = leafletRef.current;
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
