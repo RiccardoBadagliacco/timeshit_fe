@@ -50,7 +50,7 @@ const CONFIG: {
   },
 };
 
-const GEO_API = "https://timeshit-be.onrender.com/poops/geolocated?limit=500";
+const GEO_API = "https://timeshit-be-dw94.onrender.com/poops/geolocated?limit=500";
 
 export default function GeoPoopPage() {
   const { state } = useHeaderState();
